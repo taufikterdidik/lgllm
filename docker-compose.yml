@@ -1,0 +1,25 @@
+services:
+  lgllm:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    image: lgllm:dev
+    container_name: lgllm
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:20128:20128"
+    volumes:
+      - ./config.yaml:/etc/lgllm/config.yaml:ro
+    environment:
+      # Config can use ${LGLLM_*} references instead of storing secrets on disk.
+      LGLLM_LOG_FORMAT: json
+      LGLLM_LOG_LEVEL: info
+    # Streaming proxies stay healthy under load better with an explicit stop
+    # grace period matching server.shutdown_timeout.
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "/lgllm", "-config", "/etc/lgllm/config.yaml", "-healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

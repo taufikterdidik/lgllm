@@ -1,0 +1,107 @@
+# lgllm configuration
+#
+# ${VAR} and ${VAR:-default} references are expanded from the environment before
+# parsing, so this file can be committed while secrets live in the environment.
+# Point secrets at env vars rather than pasting keys here.
+
+server:
+  # Loopback by default. Use 0.0.0.0:20128 to expose it (and set auth.mode to
+  # required with at least one key).
+  listen: 127.0.0.1:20128
+
+  # Only header reads are bounded here. Streams are long-lived, so there is no
+  # global read/write timeout; upstream timeouts live under "upstream" below.
+  read_header_timeout: 10s
+  idle_timeout: 120s
+  shutdown_timeout: 10s
+
+  max_body_bytes: 33554432 # 32 MiB
+
+  cors_origins:
+    - "*"
+
+auth:
+  # off       - never check (loopback only; refused on a public bind)
+  # localhost - loopback clients are trusted, everyone else needs a key
+  # required  - every client needs a key
+  mode: localhost
+
+  keys:
+    # Plaintext is fine for a local file. For a shared machine, store a digest
+    # instead: printf '%s' 'sk-your-token' | sha256sum
+    # - "sha256:<64 hex chars>"
+    # - ${LGLLM_API_KEY}
+    - "dev-local-key-change-me"
+
+log:
+  level: info # debug|info|warn|error
+  format: text # text|json
+
+upstream:
+  # TCP connect + TLS handshake.
+  connect_timeout: 10s
+  # How long to wait for the provider's status line and headers. Not a
+  # whole-request timeout: once headers arrive the body may stream for minutes.
+  response_header_timeout: 120s
+  # Abort a response body that produces no bytes for this long. A stalled stream
+  # looks alive to the client while it pays for nothing.
+  stream_idle_timeout: 90s
+  # Abort when the client stops reading, so one stuck client cannot pin a
+  # goroutine and an upstream connection forever.
+  stream_write_timeout: 30s
+  max_idle_conns_per_host: 64
+
+# Providers extend or override the built-in catalog (anthropic/cc, deepseek/ds,
+# gemini/gem, groq/gq, mistral/ms, ollama, openai/oa, openrouter/or). Only fields
+# you set are overridden; everything else is inherited. Delete this whole section
+# if the catalog is enough.
+providers:
+  # A self-hosted or corporate gateway that is not in the catalog. A provider the
+  # catalog does not know must spell out base_url, format and auth.
+  # - id: mygateway
+  #   alias: mg
+  #   base_url: https://llm-gateway.internal/v1
+  #   format: openai
+  #   auth: bearer
+  #   headers:
+  #     x-team: platform
+  #   models:
+  #     - id: internal-llama-70b
+  #       name: Internal Llama 70B
+  #       context: 131072
+
+  # Catalog overrides work the same way, e.g. pin OpenAI to a proxy:
+  # - id: oa
+  #   base_url: https://openai-proxy.internal/v1
+
+# A provider is usable only once at least one enabled connection references it.
+# Add as many connections per provider as you like; phase 2 uses the first,
+# phase 5 adds rotation and fallback across them.
+connections:
+  # Ollama needs no API key, so this works out of the box on a dev machine.
+  - id: ollama-local
+    provider: ollama
+
+  # - id: deepseek-main
+  #   provider: deepseek
+  #   api_key: ${DEEPSEEK_API_KEY}
+  #
+  # - id: openrouter-main
+  #   provider: or
+  #   api_key: ${OPENROUTER_API_KEY}
+  #
+  # - id: gateway-a
+  #   provider: mygateway
+  #   api_key: ${GATEWAY_API_KEY}
+  #   # Optional per-connection host override (useful for a region or staging box):
+  #   base_url: https://eu.llm-gateway.internal/v1
+
+# Used for a bare model name ("gpt-4o") that carries no provider prefix. Defaults
+# to the only usable provider; set it explicitly once several are configured.
+# default_provider: deepseek
+
+tokensaver:
+  # Reserved for phase 6; parsed and validated now so the schema is stable.
+  enabled: true
+  min_bytes: 2048
+  max_bytes: 524288

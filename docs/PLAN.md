@@ -1,0 +1,429 @@
+# lgllm — Padanan 9Router versi lightweight (Go)
+
+Dokumen ini adalah rencana pembangunan (roadmap) bertahap: dari core proxy minimal
+sampai UI opsional. Diturunkan dari pembacaan source `decolua/9router` (v terbaru):
+
+```
+src/app/api/v1/{chat/completions, messages, responses, models, embeddings, audio, images, videos, search}
+src/sse/{handlers,services,utils}      -> lapisan Next.js (auth key, quota, logging)
+open-sse/providers/registry/*.js (147) -> deklarasi provider (baseUrl, format, model list)
+open-sse/translator/{request,response} -> terjemahan format antar-provider
+open-sse/executors/*.js (47)           -> eksekutor khusus (OAuth/web/browser)
+open-sse/services/{combo,accountFallback,tokenRefresh}.js
+open-sse/rtk/*                         -> kompresi tool_result
+src/lib/db/* (SQLite)                  -> config, usage, request log
+```
+
+---
+
+## 0. Prinsip & batas lingkup
+
+9Router itu "everything router": 40+ provider, OAuth web login, browser pool, MITM,
+multi-bahasa, cloud sync, Next.js 16 + React 19. Yang kita ambil hanya inti yang
+memberi 90% nilai, sisanya dipotong.
+
+| Kapabilitas | 9Router | lgllm v1 | Alasan |
+|---|---|---|---|
+| Ingress OpenAI-compatible (`/v1/chat/completions`) | ✅ | ✅ wajib | ini yang dipakai semua CLI |
+| Ingress Anthropic (`/v1/messages`) | ✅ | ✅ fase 4 | Claude Code butuh ini |
+| Ingress Gemini/responses | ✅ | fase 4 (opsional) | bisa ditunda |
+| Egress provider API-key (OpenAI/Anthropic/Gemini/Groq/DeepSeek/OpenRouter/GLM/Ollama) | ✅ | ✅ | inti |
+| Provider OAuth / web-login / browser automation (Kiro, Cursor, Codex-web) | ✅ | ❌ | berat + rawan ToS, bukan "lightweight" |
+| Auto-fallback + multi-account round-robin | ✅ | ✅ fase 5 | pembeda utama |
+| Kompresi tool_result (RTK) | ✅ | ✅ versi lite fase 6 | hemat token nyata |
+| Caveman/Ponytail prompt injection | ✅ | opsional fase 6 | murah, tinggal prompt |
+| Dashboard UI | Next.js | fase 10, statis + `go:embed` | opsional |
+| SQLite | ✅ | fase 3 (awalnya YAML) | hindari cgo |
+| Cloud sync, i18n, updater, tunnel, media (STT/TTS/image/video) | ✅ | ❌ | out of scope v1 |
+
+Target teknis "lightweight":
+- 1 binary statis (CGO off), ~12–20 MB, RSS idle < 40 MB, start < 100 ms.
+- Runtime tanpa Node/npm. Binary + 1 file config.
+- Target ~8–12 ribu baris Go, bukan ~100 ribu baris JS.
+
+Catatan legal: 9Router MIT, boleh jadi acuan arsitektur, tetap cantumkan atribusi.
+Jangan port jalur OAuth/web-login provider gratisan — itu bagian paling rapuh dan
+paling berkaitan dengan ToS provider.
+
+---
+
+## 1. Fondasi repo (hari 1) — ✅ SELESAI
+
+> Implementasi: `cmd/lgllm`, `internal/{config,auth,server,version}`,
+> `config.example.yaml`, `Makefile`, `Dockerfile`, CI. Binary 7.2 MB (CGO off),
+> `make check` hijau termasuk `-race`.
+
+**Yang sudah ada:**
+
+- `Config` + default + validasi strict (unknown key, multi-document, tipe durasi).
+- Ekspansi `${VAR}` / `${VAR:-default}` sebelum parsing; gagal keras bila var hilang.
+- Watcher config: SIGHUP + polling mtime, swap atomik, reload gagal tidak menurunkan layanan.
+- `auth.Verifier` constant-time, dukung `sha256:<hex>`, rotasi key live, fail-closed.
+- Server: recover → request ID → access log → CORS → auth → body limit.
+  `ReadHeaderTimeout`/`IdleTimeout` saja (tanpa timeout total, supaya stream aman).
+- `/healthz`, `/readyz`, `/version`, `/`, dan `/v1/*` (501 informatif).
+- `-check`, `-version`, `-healthcheck` (untuk distroless), `-listen`, `-log-*`, `-config-poll`.
+- Graceful shutdown SIGINT/SIGTERM, binary statis, image Docker scratch.
+
+**Temuan saat implementasi (penting untuk fase berikutnya):**
+
+1. `http.Server` tanpa `ReadTimeout`/`WriteTimeout` — jangan pernah menambahkannya
+   global; fase 2 harus pakai deadline per-fase + stall detector.
+2. `statusRecorder` wajib meneruskan `Flush()` dan `Unwrap()`, kalau tidak SSE mati diam-diam.
+3. Middleware auth memakai `s.Config()` per request, bukan snapshot, agar reload berlaku.
+4. Port `20128` sering sudah dipakai 9Router; default tetap sama supaya drop-in,
+   tapi sediakan `-listen` untuk menjalankan keduanya berdampingan.
+
+Struktur:
+
+```
+lgllm/
+  cmd/lgllm/main.go          # wiring, flags, signal handling
+  internal/
+    config/                  # load + validasi + reload YAML/env
+    server/                  # HTTP server, middleware, routing
+    auth/                    # API key lokal, hash, middleware
+    registry/                # deklarasi provider (Go literal, bukan file per provider)
+    provider/                # adapter: openai, anthropic, gemini, ollama, custom
+    router/                  # resolve model -> target, combo, fallback, cooldown
+    translate/               # IR + request/response translator + stream state machine
+    tokensaver/              # filter git-diff/grep/ls/json + guard
+    usage/                   # pencatatan token, biaya, request log
+    store/                   # interface + implementasi YAML dulu, SQLite nanti
+    api/                     # handler /v1/* dan /api/*
+  internal/translate/testdata # golden files
+  web/                       # (fase 10) SPA, di-embed
+  docs/PLAN.md
+  Makefile, Dockerfile, goreleaser.yaml
+```
+
+Dependensi awal sengaja sedikit:
+`net/http` (Go 1.22 pattern routing), `gopkg.in/yaml.v3`, `log/slog`.
+Belum pakai framework. Tambah `modernc.org/sqlite` (pure Go) hanya di fase 3.
+
+Definisi selesai fase 1:
+- `lgllm -config config.yaml` jalan, `/healthz` OK, config tervalidasi dengan pesan error jelas,
+  `SIGHUP` reload config.
+
+---
+
+## 2. Core proxy satu provider (hari 2–3) — ✅ SELESAI
+
+Tujuan: menyalurkan request ke satu upstream tanpa mengubah apa pun (passthrough).
+Ini fondasi untuk semua fase berikutnya.
+
+- `POST /v1/chat/completions` dan `GET /v1/models`.
+- Streaming: **jangan buffer**. Baca upstream dengan `bufio.Scanner`/`io.Copy` ke
+  `http.ResponseWriter` + `Flush()` per event. Set header `text/event-stream`,
+  `Cache-Control: no-cache`, matikan kompresi.
+- Propagasi `r.Context()` ke `http.NewRequestWithContext` supaya client disconnect
+  langsung membatalkan request upstream (hemat token!).
+- Timeout berlapis: dial 10s, response header 120s, **tanpa** total timeout untuk stream,
+  tapi idle/stall timeout (mis. 90s tanpa byte → abort).
+- Error handling: upstream 4xx/5xx diteruskan apa adanya, plus `X-Lgllm-Provider`.
+- Middleware: request ID, access log (slog), recover panic, body size limit,
+  CORS untuk browser client.
+- API key lokal: `Authorization: Bearer <key>`; mode `localhost-only` (tanpa key kalau
+  bind ke 127.0.0.1) meniru perilaku 9Router.
+
+Definisi selesai: `curl` stream ke OpenAI/DeepSeek lewat lgllm, throughput sama
+dengan langsung (uji dengan `hey`/`vegeta`), latency overhead < 5 ms.
+
+**Temuan saat implementasi (penting untuk fase berikutnya):**
+
+1. **Tidak ada `http.Client.Timeout`.** Timeout header diterapkan lewat
+   `Transport.ResponseHeaderTimeout` di client terpisah per nilai timeout
+   (`byTimeout`), bukan context deadline — context deadline juga mematikan body,
+   sehingga stream sehat ikut terpotong.
+2. **Watchdog stall menutup `resp.Body`, bukan membatalkan context.** Menutup body
+   langsung membangunkan `Read` yang macet.
+3. **`SetWriteDeadline` per chunk** (`http.ResponseController`) mencegah client yang
+   berhenti membaca menahan goroutine selamanya; deadline dibersihkan di akhir agar
+   koneksi keep-alive tidak keracunan.
+4. **Registry dibangun sebelum swap config.** `Watcher.onChange` kini
+   `func(*Config) error`: registry baru divalidasi lebih dulu, dan error menolak
+   seluruh reload sehingga snapshot lama tetap melayani.
+5. **Katalog menyimpan API root**, bukan endpoint penuh; proxy menambahkan
+   `/chat/completions`. Gemini diarahkan ke root kompatibel `[OI]`
+   (`/v1beta/openai`) supaya bisa lewat passthrough fase 2 tanpa translator.
+6. **Prefix model yang bukan provider dianggap bagian dari id model**, sehingga
+   id ala OpenRouter (`vendor/model`) tetap bekerja. Tanpa prefix, provider default
+   dipakai; bila tidak bisa disimpulkan, jawabannya 400 dengan contoh format.
+7. Provider non-`openai` dijawab 501 eksplisit sampai translator fase 4 ada.
+8. **Header SSE di-flush sebelum byte pertama.** Tanpa flush eksplisit setelah
+   `WriteHeader`, `net/http` menahan status dan header sampai ada 32 KiB body
+   atau handler selesai. Akibatnya client tidak tahu stream sudah terbuka, dan
+   `stream_write_timeout` baru bisa mendeteksi client yang pergi jauh lebih
+   lambat. Satu `ResponseController.Flush()` tepat setelah `WriteHeader` untuk
+   respons SSE memperbaikinya (terlihat langsung sebagai hang di test
+   client-disconnect).
+
+Temuan lain saat stabilisasi test fase 2:
+
+9. **`httptest.Server.Close` menunggu handler yang masih berjalan**, jadi mock
+   upstream yang "tidak pernah menjawab" membuat seluruh suite menggantung, bukan
+   gagal. Handler mock harus berhenti pada `r.Context().Done()` atau setelah
+   batas waktu pendek.
+10. **Non-stream response memakai `Content-Length` upstream.** Body-nya disalin
+    utuh, jadi panjang asli masih valid; ini menghindari chunked encoding untuk
+    respons JSON biasa.
+11. **Tanpa provider yang bisa dipakai, jawabannya 503, bukan 404.** 404 ambigu
+    dengan "model tidak dikenal", padahal penyebabnya config kosong.
+
+---
+
+## 3. Registry provider & routing model (hari 4–6) — ✅ SELESAI (sebagian besar di fase 2)
+
+> Status jujur: registry deklaratif, materialisasi katalog, validasi lintas-referensi,
+> dan resolusi `provider/model` sudah jalan di `internal/registry/registry.go`, dan
+> ikut terpakai oleh fase 2. Yang belum: alias model (mis. `fast` → id konkret),
+> inferensi prefix (`gpt-*` → openai), `combos[]`, dan penyimpanan SQLite/CRUD.
+> Poin-poin itu pindah ke fase 5/9 dan tidak menghambat proxy.
+
+
+Model deklaratif, bukan kode per provider:
+
+```go
+type Provider struct {
+    ID       string
+    Alias    string
+    Category string   // apikey | oauth | free
+    BaseURL  string
+    Format   Format   // openai | anthropic | gemini | openai-responses | ollama
+    Auth     AuthSpec // header + scheme + source
+    Headers  map[string]string
+    Models   []Model
+    Timeout  time.Duration
+}
+
+type Model struct {
+    ID, Name string
+    Kind     string // llm | embedding | image...
+    Context  int
+    Capabilities map[string]bool // vision, tools, pdf
+}
+```
+
+- Registry awal cukup 6–8 provider: `openai`, `anthropic`, `gemini`, `deepseek`,
+  `groq`, `openrouter`, `ollama`, `custom*` (OpenAI-compatible generik).
+- Resolusi nama model: `provider/model`, alias provider (`cc/` → anthropic),
+  alias model (`fast` → `groq/llama-...`), dan inferensi prefix (`gpt-*` → openai,
+  `claude-*` → anthropic) dengan fallback ke provider default.
+- Simpan daftar koneksi (akun) + API key di store. Mulai YAML; migrasi ke SQLite
+  begitu butuh usage log dan CRUD dari UI.
+- Format config: satu file `config.yaml` berisi `server`, `providers[]`,
+  `connections[]`, `combos[]`, `keys[]`, `tokensaver`.
+
+Definisi selesai: `GET /v1/models` mengembalikan gabungan model + combo + alias
+dalam format OpenAI (`{"object":"list","data":[...]}`), dan routing `provider/model`
+bekerja untuk 3 provider berbeda.
+
+---
+
+## 4. Translasi format — bagian tersulit (minggu 2)
+
+Ini yang membuat "satu endpoint untuk semua CLI". Pakai **OpenAI Chat sebagai pivot**,
+persis seperti 9Router (`source -> openai -> target`), supaya jumlah translator
+linear bukan kuadratik.
+
+IR minimal:
+
+```go
+type Message struct {
+    Role       string        // system|user|assistant|tool
+    Blocks     []Block       // text, image, tool_use, tool_result, thinking
+    ToolCalls  []ToolCall
+    ToolCallID string
+}
+type Request struct {
+    Model, System string
+    Messages []Message
+    Tools []Tool
+    ToolChoice any
+    MaxTokens int
+    Temperature *float64
+    Stream bool
+    Stop []string
+}
+```
+
+Translator yang wajib, berurutan prioritas:
+1. `openai` ↔ `anthropic` (Claude Code, Cline, Continue) — paling penting.
+2. `anthropic` → `openai` untuk ingress `/v1/messages`.
+3. `openai` ↔ `gemini`.
+4. `openai` ↔ `openai-responses` (Codex CLI).
+
+Detail yang sering bikin bug, harus masuk test:
+- `tool_calls` id ↔ `tool_use.id` + `tool_result.tool_use_id`; tool result paralel.
+- `stop_reason`: `tool_use`/`end_turn`/`max_tokens` ↔ `tool_calls`/`stop`/`length`.
+- `usage`: `prompt_tokens`/`completion_tokens` ↔ `input_tokens`/`output_tokens`
+  (+ `cache_read_input_tokens`).
+- Thinking/reasoning: `reasoning_content`, `thinking` blocks, `reasoning_effort`,
+  signature Anthropic (jangan dikirim ke provider lain).
+- Multi-part content: text + image (base64 & URL), audio dibuang bila tak didukung.
+- System prompt: array Anthropic vs string OpenAI.
+- `max_tokens` wajib di Anthropic, default-kan kalau klien tidak kirim.
+
+Streaming: translator harus **stateful per request**:
+- Anthropic `message_start` → `content_block_start` → `content_block_delta` →
+  `message_delta`/`message_stop` dipetakan ke potongan `chat.completion.chunk`.
+- Kirim `[DONE]` hanya untuk format OpenAI.
+- Tangani tool-call delta (argumen JSON terpotong) dan flush buffer bila stream putus.
+
+Strategi uji: golden files (request/response JSON in → out) + test round-trip
+`openai → claude → openai` idempoten pada fixture nyata. Ini yang membuat refactor aman.
+
+Definisi selesai: Claude Code CLI dan satu tool OpenAI-compatible bisa memakai
+provider yang formatnya berbeda, streaming dan tool calling utuh.
+
+---
+
+## 5. Router: combo, fallback, multi-akun (minggu 3)
+
+```go
+type Combo struct {
+    Name    string
+    Members []string // "anthropic/claude-sonnet", "deepseek/deepseek-chat", "groq/..."
+    Strategy string  // priority | round-robin | capability
+}
+```
+
+- Loop anggota combo; request dianggap commit setelah byte pertama terkirim.
+  Untuk stream, **peek event pertama**: kalau upstream balas 2xx tapi stream kosong /
+  langsung error, masih boleh pindah anggota. Setelah ada konten terkirim, tidak bisa.
+- Klasifikasi error (contoh aturan, buat tabel bukan if-else berserak):
+  - 401/403 → akun invalid (cooldown panjang), fallback.
+  - 402/quota/insufficient → cooldown sampai reset bila diketahui, fallback.
+  - 429 → exponential backoff 1s→2s→4s… maks 4 menit per akun, fallback.
+  - 400/413/422 (context overflow, param salah) → **request-scoped**: jangan cooldown
+    akun, tapi coba anggota berikutnya (pelajaran penting dari `accountFallback.js`).
+  - 5xx/timeout/koneksi putus → cooldown pendek, fallback.
+- Round-robin multi-akun per provider + sticky per session (hash `session_id`) supaya
+  prompt cache upstream tetap kena.
+- Circuit breaker per koneksi (opsional, fase 8).
+- Balas 502 dengan ringkasan semua percobaan (`lastError`) supaya debugging gampang,
+  formatnya jangan menutupi error asli.
+
+Definisi selesai: matikan satu API key → request otomatis pindah, tanpa 5xx ke klien.
+
+---
+
+## 6. Token saver lite (minggu 3–4)
+
+Port inti RTK saja, tanpa semua filter eksotis:
+- Hook sebelum translasi, hanya menyentuh blok `tool_result` / `role:"tool"`.
+- Guard: hanya bila panjang > N byte (mis. 2 KB), lewati `is_error`, idempoten,
+  dan selalu pertahankan awal + akhir output (head/tail) agar model tetap paham.
+- Filter awal: `git diff`, `git status`, `grep`/`rg`, `ls`/`find`, `tree`,
+  JSON besar (minify + buang field verbose), log panjang (dedup baris).
+- Hitung `bytesBefore/bytesAfter`, catat ke usage log → tampilkan "saved X%" di UI.
+- Bypass per request: header `X-Lgllm-Token-Saver: off`.
+- Opsional murah: injeksi prompt "caveman"/"ponytail" (cukup system message
+  tambahan, bisa dimatikan per combo).
+
+Definisi selesai: pada sesi agent nyata, input token turun ≥ 15% dengan output
+tetap benar (uji regresi manual pada 5 task).
+
+---
+
+## 7. Observability & operasional (minggu 4)
+
+- `GET /healthz` (liveness), `GET /readyz` (cek store), `GET /metrics` (Prometheus:
+  request count/latency/token per provider), pprof di port terpisah.
+- Request log: id, waktu, provider, model, status, durasi, token in/out, biaya estimasi,
+  bytes saved, error. Simpan ring buffer di memori + opsional SQLite.
+- Tabel harga per model untuk estimasi biaya (jangan over-engineer, update manual).
+- Log terstruktur slog, level via config; log body hanya bila `debug` dan dengan redaksi
+  header otorisasi.
+
+---
+
+## 8. Kredensial lanjutan (opsional, minggu 5)
+
+- Enkripsi secret at-rest (AES-GCM, key dari env/`--master-key`), bukan plaintext YAML.
+- OAuth PKCE untuk provider yang memang mengizinkannya + refresh token background
+  (single-flight, jitter, `refresh_lead_ms`).
+- Rate limit per API key + kuota harian (mirip `keyAccess`).
+- Kalau tetap mau provider "free tier" berbasis web login: isolasi di build tag
+  terpisah dan dokumentasikan risikonya. Jangan jadi dependency core.
+
+---
+
+## 9. Admin REST API (minggu 5)
+
+UI nanti hanya konsumen API ini:
+```
+GET/POST/PUT/DELETE /api/providers
+GET/POST/PUT/DELETE /api/connections
+GET/POST/PUT/DELETE /api/combos
+GET/POST/DELETE     /api/keys
+GET                 /api/usage?from=&to=&group=provider
+GET                 /api/logs?limit=
+GET                 /api/logs/stream        (SSE live)
+POST                /api/test-connection
+```
+Autentikasi admin terpisah dari key inference (session cookie/token), default hanya
+bind localhost.
+
+---
+
+## 10. UI opsional (minggu 6, hanya setelah core stabil)
+
+Dua opsi, pilih salah satu:
+
+A. **Web UI minimal** — SPA (Svelte/Vite, ~100 KB) di-`go:embed`, halaman:
+   Providers, Connections, Combos, Keys, Usage, Logs (SSE), Settings.
+   Tanpa SSR, tanpa Node saat runtime. Ini yang menyerupai dashboard 9Router.
+
+B. **TUI** (bubbletea) — untuk yang benar-benar ingin "lightweight": kelola koneksi,
+   lihat log live, lihat usage dari terminal. Binary tetap satu, tanpa aset web.
+
+Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain.
+
+---
+
+## 11. Packaging & benchmark (minggu 6)
+
+- `goreleaser`: linux/darwin/windows amd64+arm64, CGO_ENABLED=0, `-trimpath -ldflags "-s -w"`.
+- Docker multi-stage → `gcr.io/distroless/static` atau `scratch`; image < 30 MB.
+- Systemd unit + Homebrew tap (opsional).
+- Benchmark pembanding vs 9Router: ukuran image, RSS idle & saat streaming,
+  cold start, overhead latency p50/p99, request/detik.
+- Dokumentasi: README, contoh `config.yaml`, panduan integrasi
+  Claude Code / Cline / Continue / OpenCode / Codex.
+
+---
+
+## Urutan eksekusi ringkas
+
+| Fase | Isi | Estimasi | Demo |
+|---|---|---|---|
+| 1 | Skeleton, config, health | 1 hari | binary jalan |
+| 2 | Proxy streaming + auth key | 2 hari | ✅ selesai |
+| 3 | Registry + routing model | 3 hari | ✅ inti selesai (alias model & combo menyusul) |
+| 4 | Translasi format + stream state machine | 5–7 hari | Claude Code → OpenAI provider |
+| 5 | Combo, fallback, multi-akun | 3–4 hari | failover otomatis |
+| 6 | Token saver | 3 hari | laporan hemat token |
+| 7 | Metrics, usage, log | 2 hari | dashboard-less observability |
+| 8 | Secret encryption, OAuth (opsional) | 3 hari | refresh otomatis |
+| 9 | Admin API | 2 hari | CRUD via curl |
+| 10 | UI (web/TUI) | 4–6 hari | dashboard |
+| 11 | Release & benchmark | 2 hari | image < 30 MB |
+
+Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
+kalau dikejar paritas dengan 9Router — jangan.
+
+---
+
+## Risiko utama
+
+1. **Translasi format** adalah 60% effort. Jangan tulis translator ad-hoc; bangun IR +
+   golden test sejak awal, kalau tidak akan jadi utang teknis permanen.
+2. **Fallback saat streaming** tidak bisa setelah byte pertama. Desain "peek first event"
+   dari awal, jangan ditambal belakangan.
+3. **Bocor konteks/token**: context cancellation dan idle timeout wajib benar sejak fase 2,
+   karena agent CLI sering membatalkan request di tengah jalan.
+4. **Godaan menambah provider**. Registry deklaratif membuat tambah provider murah,
+   tapi setiap format baru menambah matriks test. Batasi 4 format dulu.
+5. **Provider OAuth/web-login** menggoda (gratis) tapi rapuh dan berisiko ToS —
+   perlakukan sebagai plugin eksperimental, bukan fitur inti.

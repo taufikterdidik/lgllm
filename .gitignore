@@ -1,0 +1,19 @@
+# build output
+/bin/
+/dist/
+
+# local configuration and secrets
+/config.yaml
+/config.local.yaml
+*.local.yaml
+
+# editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# test artifacts
+*.test
+*.out
+coverage.*
