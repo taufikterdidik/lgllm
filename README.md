@@ -144,6 +144,7 @@ internal/auth/        API key verifier (constant time, hash-only option)
 internal/registry/    provider catalog, config merge, validation, model routing
 internal/upstream/    outbound HTTP client, streaming relay, stall detection
 internal/translate/   pivot IR and OpenAI/Anthropic/Gemini/Responses translators
+internal/balancer/    credential rotation, sticky sessions, cooldown/backoff
 internal/server/      listener, middleware chain, routes, /v1 handlers
 internal/version/     build metadata
 docs/PLAN.md          phase-by-phase roadmap
@@ -175,6 +176,17 @@ pair per provider. `openai`, `anthropic`, native `gemini`, and
 When the client and provider speak the same dialect the body is forwarded
 byte-for-byte; only the `model` member is rewritten when routing changes it.
 `/v1/messages` speaks Anthropic to the client and can route to any provider.
+
+**Failover is per attempt and per credential.** A request walks an ordered plan:
+combo members first, and within each provider its credentials. A credential that
+answers 401/402/429/5xx cools down (exponential, capped) and the next one serves;
+a bad request (400/404/413/422) is request-scoped and never cools the account. A
+`X-Lgllm-Session`/`X-Session-Id` header, Anthropic `metadata.user_id`, or
+`prompt_cache_key` makes the choice sticky so the upstream prompt cache stays
+warm. Streams are peeked before the first byte reaches the client when a fallback
+exists, so a provider that answers 200 and then errors does not consume the
+request. When every attempt fails, a single attempt is relayed verbatim; multiple
+attempts produce a 502 that lists each provider, model, status and error.
 
 **Auth defaults to `localhost`.** Loopback clients are trusted so a locally
 installed CLI works with no setup; anything else must present a key. `auth.mode:

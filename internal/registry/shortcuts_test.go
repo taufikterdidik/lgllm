@@ -338,3 +338,55 @@ func TestAliasesAndCombosListing(t *testing.T) {
 		t.Errorf("Shortcut(fast) = %+v, %v", tgt, ok)
 	}
 }
+
+func TestPlanListsComboMembersInOrder(t *testing.T) {
+	cfg := shortcutConfig()
+	cfg.Combos = []config.Combo{{
+		Name:    "coding",
+		Members: []string{"acme/acme-small", "other/other-one"},
+	}}
+	r, err := New(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := r.Plan("coding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Combo != "coding" || len(plan.Attempts) != 2 {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if plan.Attempts[0].Provider.ID != "acme" || plan.Attempts[1].Provider.ID != "other" {
+		t.Errorf("attempt order = %+v", plan.Attempts)
+	}
+
+	// A plain model still yields exactly one attempt.
+	single, err := r.Plan("acme/acme-large")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(single.Attempts) != 1 || single.Attempts[0].Model != "acme-large" {
+		t.Errorf("single plan = %+v", single)
+	}
+}
+
+func TestPlanRoundRobinRotatesStartingMember(t *testing.T) {
+	cfg := shortcutConfig()
+	cfg.Combos = []config.Combo{{
+		Name:     "coding",
+		Strategy: StrategyRoundRobin,
+		Members:  []string{"acme/acme-small", "other/other-one"},
+	}}
+	r, err := New(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, _ := r.Plan("coding")
+	second, _ := r.Plan("coding")
+	if first.Attempts[0].Provider.ID == second.Attempts[0].Provider.ID {
+		t.Errorf("round-robin did not rotate: %s then %s",
+			first.Attempts[0].Provider.ID, second.Attempts[0].Provider.ID)
+	}
+}

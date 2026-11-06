@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lgllm/internal/auth"
+	"lgllm/internal/balancer"
 	"lgllm/internal/config"
 	"lgllm/internal/registry"
 	"lgllm/internal/upstream"
@@ -31,6 +32,9 @@ type Server struct {
 	Registry func() *registry.Registry
 	// Upstream is the shared outbound client. Its transport is reloaded in place.
 	Upstream *upstream.Client
+	// Balancer remembers which credentials recently failed and rotates the
+	// healthy ones. It lives across config reloads so a cooldown survives.
+	Balancer *balancer.Balancer
 
 	mux *http.ServeMux
 	srv *http.Server
@@ -47,6 +51,7 @@ type Options struct {
 	Auth     *auth.Verifier
 	Registry func() *registry.Registry
 	Upstream *upstream.Client
+	Balancer *balancer.Balancer
 }
 
 // New builds the server and registers routes. The listener is not opened yet.
@@ -77,12 +82,16 @@ func New(opts Options) *Server {
 	if opts.Upstream == nil {
 		opts.Upstream = upstream.New(config.Default().Upstream)
 	}
+	if opts.Balancer == nil {
+		opts.Balancer = balancer.New()
+	}
 	s := &Server{
 		Config:   opts.Config,
 		Log:      opts.Log,
 		Auth:     opts.Auth,
 		Registry: opts.Registry,
 		Upstream: opts.Upstream,
+		Balancer: opts.Balancer,
 		mux:      http.NewServeMux(),
 		started:  time.Now(),
 	}

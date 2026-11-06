@@ -89,8 +89,9 @@ providers:
   #   base_url: https://openai-proxy.internal/v1
 
 # A provider is usable only once at least one enabled connection references it.
-# Add as many connections per provider as you like; phase 2 uses the first,
-# phase 5 adds rotation and fallback across them.
+# Add as many connections per provider as you like: requests rotate across them
+# and a credential that fails (401/402/429/5xx) cools down while the next one
+# serves. A session header keeps a conversation on one connection.
 connections:
   # Ollama needs no API key, so this works out of the box on a dev machine.
   - id: ollama-local

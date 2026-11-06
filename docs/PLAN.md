@@ -431,12 +431,12 @@ Dicatat supaya tidak dianggap bug dan tidak hilang dari roadmap:
 
 ---
 
-## 5. Router: combo, fallback, multi-akun (minggu 3)
+## 5. Router: combo, fallback, multi-akun (minggu 3) — ✅ SELESAI
 
-> Status: kerangka `Combo` sudah ada sejak fase 3 — `strategy: priority` memilih
-> member pertama yang providernya punya credential. Yang dikerjakan di fase ini:
-> retry ke member berikutnya setelah percobaan gagal, klasifikasi error/cooldown,
-> rotasi multi-akun, dan peek event pertama untuk stream.
+> Status: request sekarang berjalan lewat daftar percobaan. Combo mencoba member
+> berikutnya setelah gagal, provider dengan beberapa connection merotasi
+> kredensialnya, kredensial yang gagal masuk cooldown dengan backoff, dan stream
+> di-peek dulu sebelum dianggap commit. Semua state ada di memori proses.
 
 ```go
 type Combo struct {
@@ -463,6 +463,48 @@ type Combo struct {
   formatnya jangan menutupi error asli.
 
 Definisi selesai: matikan satu API key → request otomatis pindah, tanpa 5xx ke klien.
+
+### 5a. Keputusan implementasi — ✅ SELESAI
+
+- `registry.Plan` mengembalikan daftar percobaan berurutan, bukan satu target.
+  Combo berisi semua member yang providernya punya credential; `Lookup` menjadi
+  pembungkus yang mengambil percobaan pertama. Combo `round-robin` merotasi
+  urutan itu per request.
+- `internal/balancer` memilih urutan kredensial untuk satu provider:
+  - kredensial yang sedang cooldown dilewati;
+  - jika semua sedang cooldown dan masih ada member combo lain, provider itu
+    dilewati sama sekali; kalau ini percobaan terakhir, semuanya tetap dicoba
+    sebagai jalan terakhir;
+  - `X-Lgllm-Session`, `X-Session-Id`, `metadata.user_id`, atau
+    `prompt_cache_key` membuat pilihan sticky per sesi supaya prompt cache
+    upstream tetap kena; tanpa session, kursor berputar per request.
+- Klasifikasi kegagalan (`classifyStatus`):
+
+  | Status | Cooldown | Fallback |
+  |---|---|---|
+  | 400/404/413/422 | tidak ada (request-scoped) | ya |
+  | 401/403 | 30 mnt, dobel s/d 2 jam | ya |
+  | 402/quota | 15 mnt, dobel s/d 24 jam | ya |
+  | 429 | `Retry-After`, atau 1 dtk dobel s/d 4 mnt | ya |
+  | 408 | 15 dtk s/d 5 mnt | ya |
+  | 5xx | 30 dtk s/d 10 mnt | ya |
+  | timeout/koneksi putus | 30 dtk s/d 10 mnt | ya |
+
+  Backoff dihitung per connection id dan di-reset saat sukses. Cooldown hanya
+  memengaruhi request berikutnya: request yang sedang berjalan langsung pindah
+  ke kredensial/member berikutnya tanpa menunggu.
+- Stream di-peek hanya bila masih ada fallback (member atau connection lain).
+  Kalau upstream membalas 200 lalu mengirim event error atau langsung EOF,
+  request belum dianggap commit dan member berikutnya dicoba. Kalau tidak ada
+  fallback, header langsung dikirim seperti sebelumnya supaya klien bisa
+  menutup body dan membatalkan request upstream.
+- Semua percobaan gagal: satu percobaan direlai verbatim (status, header
+  rate-limit, body asli) seperti sebelum fase 5; lebih dari satu menghasilkan
+  502 dengan `attempts[]` yang menyebut provider, model, connection, status, dan
+  error masing-masing. Ingress `/v1/messages` memakai envelope Anthropic.
+- Yang belum: circuit breaker per koneksi (fase 8), strategi `capability`,
+  cooldown yang bertahan setelah restart, dan pengukuran latensi/biaya per
+  kredensial sebagai dasar pemilihan.
 
 ---
 
@@ -558,9 +600,9 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 |---|---|---|---|
 | 1 | Skeleton, config, health | 1 hari | binary jalan |
 | 2 | Proxy streaming + auth key | 2 hari | ✅ selesai |
-| 3 | Registry + routing model | 3 hari | ✅ inti selesai (alias model & combo menyusul) |
-| 4 | Translasi format + stream state machine | 5–7 hari | Claude Code → OpenAI provider |
-| 5 | Combo, fallback, multi-akun | 3–4 hari | failover otomatis |
+| 3 | Registry + routing model | 3 hari | ✅ selesai (alias, combo, inferensi) |
+| 4 | Translasi format + stream state machine | 5–7 hari | ✅ openai ↔ anthropic/gemini/responses |
+| 5 | Combo, fallback, multi-akun | 3–4 hari | ✅ failover + cooldown otomatis |
 | 6 | Token saver | 3 hari | laporan hemat token |
 | 7 | Metrics, usage, log | 2 hari | dashboard-less observability |
 | 8 | Secret encryption, OAuth (opsional) | 3 hari | refresh otomatis |

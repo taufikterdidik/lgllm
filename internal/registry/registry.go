@@ -764,8 +764,8 @@ func (r *Registry) Resolve(requested string) (*Provider, string, error) {
 	return t.Provider, t.Model, nil
 }
 
-// Lookup resolves a client model string, reporting which alias or combo matched
-// so a caller can log or echo the client-facing name.
+// Lookup resolves a client model string to the first attempt, reporting which
+// alias or combo matched so a caller can log or echo the client-facing name.
 //
 // Accepted forms, most specific first:
 //   - "provider/model" or "alias/model"
@@ -775,44 +775,95 @@ func (r *Registry) Resolve(requested string) (*Provider, string, error) {
 //   - a bare model whose prefix identifies a provider ("gpt-*" -> openai)
 //   - a bare model routed to default_provider
 func (r *Registry) Lookup(requested string) (Target, error) {
-	requested = strings.TrimSpace(requested)
-	if requested == "" {
-		return Target{}, errors.New("model is required")
+	plan, err := r.Plan(requested)
+	if err != nil {
+		return Target{}, err
 	}
-	return r.lookupModel(requested, make(map[string]bool, 2))
+	first := plan.Attempts[0]
+	return Target{
+		Provider: first.Provider,
+		Model:    first.Model,
+		Alias:    plan.Alias,
+		Combo:    plan.Combo,
+	}, nil
 }
 
-func (r *Registry) lookupModel(requested string, seen map[string]bool) (Target, error) {
+// Attempt is one provider/model pair a request may try.
+type Attempt struct {
+	Provider *Provider
+	Model    string
+}
+
+// Plan is the ordered list of attempts for one request. A plain model has one
+// attempt; a combo lists every usable member so the caller can retry after a
+// failure. The order is already rotated for a round-robin combo.
+type Plan struct {
+	Requested string
+	Alias     string
+	Combo     string
+	Attempts  []Attempt
+}
+
+// Plan resolves a client model string without committing to a single provider.
+func (r *Registry) Plan(requested string) (Plan, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return Plan{}, errors.New("model is required")
+	}
+	return r.planModel(requested, make(map[string]bool, 2))
+}
+
+func (r *Registry) planModel(requested string, seen map[string]bool) (Plan, error) {
+	single := func(t Target, alias, combo string) (Plan, error) {
+		return Plan{
+			Requested: requested,
+			Alias:     alias,
+			Combo:     combo,
+			Attempts:  []Attempt{{Provider: t.Provider, Model: t.Model}},
+		}, nil
+	}
+
 	if prefix, rest, found := strings.Cut(requested, "/"); found {
 		if p, ok := r.Provider(prefix); ok {
-			return modelTarget(p, rest, prefix)
+			t, err := modelTarget(p, rest, prefix)
+			if err != nil {
+				return Plan{}, err
+			}
+			return single(t, "", "")
 		}
 		// The prefix is not a provider, so the slash belongs to the model id:
 		// openrouter-style ids look exactly like "vendor/model". Only the
 		// default provider can take it; prefix inference must not guess here,
 		// or "deepseek-ai/DeepSeek-V3" behind an OpenRouter default would be
 		// sent to DeepSeek with its vendor prefix doubled.
-		return r.defaultTarget(requested)
+		t, err := r.defaultTarget(requested)
+		if err != nil {
+			return Plan{}, err
+		}
+		return single(t, "", "")
 	}
 
 	if target, ok := r.aliases[requested]; ok {
 		t, err := r.resolveTarget(target, seen)
 		if err != nil {
-			return Target{}, fmt.Errorf("alias %q -> %q: %w", requested, target, err)
+			return Plan{}, fmt.Errorf("alias %q -> %q: %w", requested, target, err)
 		}
-		t.Alias = requested
-		return t, nil
+		return single(t, requested, "")
 	}
 
 	if cb, ok := r.combos[requested]; ok {
-		return r.pickCombo(cb)
+		return r.planCombo(cb)
 	}
 
 	if p, ok := r.inferProvider(requested); ok {
-		return Target{Provider: p, Model: requested}, nil
+		return single(Target{Provider: p, Model: requested}, "", "")
 	}
 
-	return r.defaultTarget(requested)
+	t, err := r.defaultTarget(requested)
+	if err != nil {
+		return Plan{}, err
+	}
+	return single(t, "", "")
 }
 
 // defaultTarget routes a bare model name to default_provider.
@@ -824,14 +875,14 @@ func (r *Registry) defaultTarget(model string) (Target, error) {
 	return Target{Provider: p, Model: model}, nil
 }
 
-// pickCombo chooses the member that serves this request.
+// planCombo lists the members that can serve this request, in the order they
+// should be tried.
 //
 // Only members whose provider has a usable credential are candidates, so a
-// combo keeps working when one provider is unconfigured. Phase 3 selects a
-// single target up front; phase 5 turns a failed attempt into a retry against
-// the next member.
-func (r *Registry) pickCombo(cb *Combo) (Target, error) {
-	usable := make([]Target, 0, len(cb.Members))
+// combo keeps working when one provider is unconfigured. A round-robin combo
+// rotates the starting point per request; the caller retries the rest in order.
+func (r *Registry) planCombo(cb *Combo) (Plan, error) {
+	usable := make([]Attempt, 0, len(cb.Members))
 	var lastErr error
 	for _, member := range cb.Members {
 		t, err := r.resolveTarget(member, make(map[string]bool, 2))
@@ -839,23 +890,21 @@ func (r *Registry) pickCombo(cb *Combo) (Target, error) {
 			lastErr = err
 			continue
 		}
-		usable = append(usable, t)
+		usable = append(usable, Attempt{Provider: t.Provider, Model: t.Model})
 	}
 	if len(usable) == 0 {
 		if lastErr == nil {
 			lastErr = errors.New("it lists no members")
 		}
-		return Target{}, fmt.Errorf("combo %q has no usable member: %v", cb.Name, lastErr)
+		return Plan{}, fmt.Errorf("combo %q has no usable member: %v", cb.Name, lastErr)
 	}
 
-	idx := uint64(0)
 	if cb.Strategy == StrategyRoundRobin {
 		// Add(1)-1 makes the first request after a reload use member zero.
-		idx = cb.next.Add(1) - 1
+		idx := int((cb.next.Add(1) - 1) % uint64(len(usable)))
+		usable = append(usable[idx:], usable[:idx]...)
 	}
-	t := usable[idx%uint64(len(usable))]
-	t.Combo = cb.Name
-	return t, nil
+	return Plan{Requested: cb.Name, Combo: cb.Name, Attempts: usable}, nil
 }
 
 // resolveTarget resolves a configured target: it must reach a usable provider,
