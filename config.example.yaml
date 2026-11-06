@@ -128,8 +128,8 @@ aliases:
 
 # Combos group several targets under one name. `priority` picks the first member
 # whose provider has a usable credential; `round-robin` rotates the starting
-# member per request. Retrying a rejected attempt against the next member and
-# cooling down a failing account arrive in phase 5.
+# member per request. A rejected attempt falls through to the next member and the
+# failing credential cools down.
 combos:
   - name: coding
     strategy: priority
@@ -137,9 +137,16 @@ combos:
       - cc/claude-sonnet-4
       - oa/gpt-4.1
       - ds/deepseek-chat
+    # token_saver: false   # opt this combo out of tool-result compression
 
 tokensaver:
-  # Reserved for phase 6; parsed and validated now so the schema is stable.
+  # Compress large tool results (git diff, grep, JSON, logs) before they are
+  # sent upstream. Only `role: tool` content is touched, failed results are
+  # skipped, and the head + tail of every payload is always kept.
   enabled: true
+  # Results smaller than this are left alone.
   min_bytes: 2048
+  # Upper bound after compression; the middle is elided, the ends stay.
   max_bytes: 524288
+  # Optional instruction appended to the system prompt when the saver is on.
+  # prompt: "Answer concisely; do not restate the question."

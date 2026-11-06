@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"lgllm/internal/registry"
+	"lgllm/internal/tokensaver"
 	"lgllm/internal/translate"
 	"lgllm/internal/upstream"
 )
@@ -91,6 +92,45 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, in ingress) {
 		"ingress", ingressName(in),
 	)
 
+	ts := s.Config().TokenSaver
+	saving := ts.Enabled && !plan.TokenSaverOff && !tokenSaverBypassed(r)
+	needPivot := saving
+	if !needPivot {
+		for _, attempt := range plan.Attempts {
+			if attempt.Provider.Format != ingressFormat(in) {
+				needPivot = true
+				break
+			}
+		}
+	}
+
+	var (
+		pivot *translate.Request
+		stats tokensaver.Stats
+	)
+	if needPivot {
+		pivot, err = decodeIngress(in, body)
+		if err != nil {
+			s.badRequest(w, r, in, err)
+			return
+		}
+		if saving {
+			stats = tokensaver.Apply(pivot, tokensaver.Options{
+				MinBytes: ts.MinBytes,
+				MaxBytes: ts.MaxBytes,
+				Prompt:   ts.Prompt,
+			})
+			stats.SystemChanged = ts.Prompt != ""
+			if stats.Saved > 0 {
+				log.Info("token saver compressed tool results",
+					"before_bytes", stats.Before,
+					"after_bytes", stats.After,
+					"saved_bytes", stats.Saved,
+					"filters", tokensaver.SummarizeFilters(stats.Filters))
+			}
+		}
+	}
+
 	req := &generationRequest{
 		in:        in,
 		body:      body,
@@ -98,52 +138,97 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, in ingress) {
 		requested: requested,
 		stream:    stream,
 		session:   sessionKey(r, payload),
+		pivot:     pivot,
+		stats:     stats,
+		saving:    saving,
 	}
 	s.runPlan(w, r, req, plan)
 }
 
 // buildOutbound renders the upstream request body.
 //
-// For a provider that speaks the same dialect as the client, the bytes are
-// forwarded (with only the model id rewritten when routing changed it). Anything
-// else is decoded into the pivot and re-encoded for the provider.
-func buildOutbound(in ingress, format string, body []byte, payload map[string]json.RawMessage, model, requested string, stream bool) ([]byte, error) {
-	sameDialect := (in == ingressChat && format == registry.FormatChat) ||
-		(in == ingressAnthropic && format == registry.FormatAnthropic)
-	if sameDialect {
-		if model == requested {
-			return body, nil // keep the client's bytes exactly
+// The client body is decoded once (when translation or token saving needs the
+// pivot) and re-encoded per attempt, because each combo member may speak a
+// different format. When the provider matches the client dialect and the saver
+// changed nothing, the original bytes are forwarded unchanged.
+func buildOutbound(req *generationRequest, format, model string) ([]byte, error) {
+	sameDialect := format == ingressFormat(req.in)
+	if sameDialect && (req.pivot == nil || (!req.stats.Applied && !req.stats.SystemChanged)) {
+		if model == req.requested {
+			return req.body, nil // keep the client's bytes exactly
 		}
-		return rewriteModel(payload, model)
+		return rewriteModel(req.payload, model)
+	}
+	if req.pivot == nil {
+		return nil, errors.New("translation requested without a decoded body")
 	}
 
-	var (
-		pivot *translate.Request
-		err   error
-	)
-	switch in {
-	case ingressAnthropic:
-		pivot, err = translate.DecodeAnthropic(body)
-	default:
-		pivot, err = translate.DecodeOpenAI(body)
-	}
+	req.pivot.Model = model
+	req.pivot.Stream = req.stream
+	encoded, err := translate.EncodeRequest(format, req.pivot)
 	if err != nil {
 		return nil, err
 	}
-	pivot.Model = model
-	pivot.Stream = stream
-	return translate.EncodeRequest(format, pivot)
+	if !sameDialect {
+		return encoded, nil
+	}
+	// Same dialect but the saver touched messages/system: splice only those
+	// members into the client's original document, so vendor-specific top-level
+	// fields (response_format, parallel_tool_calls, ...) survive.
+	return mergeSameDialect(req.in, req.body, encoded, model)
 }
 
-// rewriteModel replaces only the "model" member of a same-dialect body, so the
-// client's exact bytes survive untouched whenever routing did not change it.
-func rewriteModel(payload map[string]json.RawMessage, model string) ([]byte, error) {
-	raw, err := json.Marshal(model)
+// mergeSameDialect replaces the members a translation can change while keeping
+// every unknown field the client sent.
+func mergeSameDialect(in ingress, original, encoded []byte, model string) ([]byte, error) {
+	var orig, enc map[string]json.RawMessage
+	if err := json.Unmarshal(original, &orig); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(encoded, &enc); err != nil {
+		return nil, err
+	}
+	if v, ok := enc["messages"]; ok {
+		orig["messages"] = v
+	}
+	if in == ingressAnthropic {
+		if v, ok := enc["system"]; ok {
+			orig["system"] = v
+		} else {
+			delete(orig, "system")
+		}
+	}
+	rawModel, err := json.Marshal(model)
 	if err != nil {
 		return nil, err
 	}
-	payload["model"] = raw
-	return json.Marshal(payload)
+	orig["model"] = rawModel
+	return json.Marshal(orig)
+}
+
+// decodeIngress parses the client's body in the dialect it arrived in.
+func decodeIngress(in ingress, body []byte) (*translate.Request, error) {
+	if in == ingressAnthropic {
+		return translate.DecodeAnthropic(body)
+	}
+	return translate.DecodeOpenAI(body)
+}
+
+// ingressFormat is the registry format matching what the client speaks.
+func ingressFormat(in ingress) string {
+	if in == ingressAnthropic {
+		return registry.FormatAnthropic
+	}
+	return registry.FormatChat
+}
+
+// tokenSaverBypassed reports the per-request opt-out.
+func tokenSaverBypassed(r *http.Request) bool {
+	switch strings.ToLower(strings.TrimSpace(r.Header.Get("X-Lgllm-Token-Saver"))) {
+	case "off", "false", "0", "no":
+		return true
+	}
+	return false
 }
 
 // generationURL is the provider's generation endpoint.
@@ -191,11 +276,12 @@ func (s *Server) relayVerbatim(w http.ResponseWriter, resp *http.Response) (int6
 }
 
 // logRelay records one stream or passthrough response.
-func logRelay(log *slog.Logger, provider *registry.Provider, model string, start time.Time, n int64, err error) {
+func logRelay(log *slog.Logger, provider *registry.Provider, model string, start time.Time, n int64, err error, stats tokensaver.Stats) {
 	attrs := []any{
 		"provider", provider.ID,
 		"model", model,
 		"bytes", n,
+		"saved_bytes", stats.Saved,
 		"dur_ms", time.Since(start).Milliseconds(),
 	}
 	switch {
@@ -315,4 +401,27 @@ func writeAnthropicError(w http.ResponseWriter, status int, message, kind string
 			"message": message,
 		},
 	})
+}
+
+// tokenSaverHeader reports the saver state on the response, which makes the
+// feature observable from a client without reading the logs.
+func tokenSaverHeader(req *generationRequest) string {
+	if req == nil || !req.saving {
+		return ""
+	}
+	if req.stats.Before == 0 {
+		return "on; saved=0"
+	}
+	return fmt.Sprintf("on; saved=%d/%d", req.stats.Saved, req.stats.Before)
+}
+
+// rewriteModel replaces only the "model" member of a same-dialect body, so the
+// client's exact bytes survive untouched whenever routing did not change it.
+func rewriteModel(payload map[string]json.RawMessage, model string) ([]byte, error) {
+	raw, err := json.Marshal(model)
+	if err != nil {
+		return nil, err
+	}
+	payload["model"] = raw
+	return json.Marshal(payload)
 }

@@ -576,6 +576,8 @@ type Combo struct {
 	Name     string
 	Members  []string
 	Strategy string
+	// TokenSaverOff mirrors the config's per-combo opt-out.
+	TokenSaverOff bool
 	// next is the round-robin cursor. Atomic because one snapshot serves
 	// concurrent requests; a reload starts again at member zero.
 	next atomic.Uint64
@@ -672,9 +674,10 @@ func (r *Registry) compileShortcuts(cfg *config.Config) {
 	r.combos = make(map[string]*Combo, len(cfg.Combos))
 	for _, cb := range cfg.Combos {
 		r.combos[cb.Name] = &Combo{
-			Name:     cb.Name,
-			Members:  append([]string(nil), cb.Members...),
-			Strategy: cb.Strategy,
+			Name:          cb.Name,
+			Members:       append([]string(nil), cb.Members...),
+			Strategy:      cb.Strategy,
+			TokenSaverOff: cb.TokenSaver != nil && !*cb.TokenSaver,
 		}
 	}
 }
@@ -801,7 +804,9 @@ type Plan struct {
 	Requested string
 	Alias     string
 	Combo     string
-	Attempts  []Attempt
+	// TokenSaverOff is set when the matched combo opted out.
+	TokenSaverOff bool
+	Attempts      []Attempt
 }
 
 // Plan resolves a client model string without committing to a single provider.
@@ -904,7 +909,12 @@ func (r *Registry) planCombo(cb *Combo) (Plan, error) {
 		idx := int((cb.next.Add(1) - 1) % uint64(len(usable)))
 		usable = append(usable[idx:], usable[:idx]...)
 	}
-	return Plan{Requested: cb.Name, Combo: cb.Name, Attempts: usable}, nil
+	return Plan{
+		Requested:     cb.Name,
+		Combo:         cb.Name,
+		TokenSaverOff: cb.TokenSaverOff,
+		Attempts:      usable,
+	}, nil
 }
 
 // resolveTarget resolves a configured target: it must reach a usable provider,

@@ -508,7 +508,13 @@ Definisi selesai: matikan satu API key → request otomatis pindah, tanpa 5xx ke
 
 ---
 
-## 6. Token saver lite (minggu 3–4)
+## 6. Token saver lite (minggu 3–4) — ✅ SELESAI
+
+> Status: `internal/tokensaver` memampatkan hasil tool sebelum dikirim ke
+> provider. Yang sudah jalan: filter diff/grep/log/JSON, guard ukuran + error +
+> idempoten + head/tail, bypass per request, opt-out per combo, prompt opsional,
+> serta angka `saved` di log dan response header. Agregasi "saved X%" untuk UI
+> menunggu fase 7.
 
 Port inti RTK saja, tanpa semua filter eksotis:
 - Hook sebelum translasi, hanya menyentuh blok `tool_result` / `role:"tool"`.
@@ -523,6 +529,35 @@ Port inti RTK saja, tanpa semua filter eksotis:
 
 Definisi selesai: pada sesi agent nyata, input token turun ≥ 15% dengan output
 tetap benar (uji regresi manual pada 5 task).
+
+### 6a. Keputusan implementasi — ✅ SELESAI
+
+- Hook berjalan pada pivot, sebelum encoding ke format provider. Untuk request
+  yang dialeknya sama dengan provider, hanya `messages`/`system` yang diganti
+  saat memang ada perubahan; field top-level yang tidak dikenal (mis.
+  `response_format`, `parallel_tool_calls`) tetap diteruskan. Tanpa perubahan,
+  body asli diteruskan byte-per-byte.
+- Guard: hanya `role:"tool"`, hanya bila panjang ≥ `min_bytes`, tidak pernah
+  untuk tool result error (`is_error` Anthropic), dan hasil yang sudah mengandung
+  marker `[lgllm:token-saver]` dilewati sehingga request ulang tidak memampatkan
+  dua kali.
+- Filter dipilih dari bentuk konten: unified diff (buang metadata + context,
+  simpan file/hunk header dan baris perubahan), JSON valid (minify + buang field
+  verbose seperti `node_id`, `avatar_url`, `created_at`), grep/status/log
+  (gabungkan baris berulang dengan penanda `repeated N times`), dan fallback
+  head/tail.
+- Semua hasil selalu mempertahankan awal dan akhir: 2/3 head, 1/3 tail dari
+  target `max_bytes` (default 8 KB), dengan penanda jumlah byte yang dibuang.
+- Bypass per request: `X-Lgllm-Token-Saver: off` (juga `false`/`0`/`no`).
+  Opt-out per combo: `combos[].token_saver: false`.
+- `tokensaver.prompt` opsional ditambahkan ke system prompt sekali saja; ini
+  pengganti murah untuk gaya "caveman/ponytail", bukan filter terpisah.
+- Statistik (`before`, `after`, `saved`, filter yang aktif) dicatat di log
+  request dan header respons `X-Lgllm-Token-Saver: on; saved=N/M`, sehingga
+  klien/UI bisa menampilkannya tanpa membuka log. Agregasi per sesi/biaya
+  menyusul di fase 7.
+- Yang belum: set filter yang bisa dikonfigurasi, metrik per filter, dedupe lintas
+  tool result, dan pengukuran regresi otomatis pada 5 task agent.
 
 ---
 
@@ -603,7 +638,7 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 | 3 | Registry + routing model | 3 hari | ✅ selesai (alias, combo, inferensi) |
 | 4 | Translasi format + stream state machine | 5–7 hari | ✅ openai ↔ anthropic/gemini/responses |
 | 5 | Combo, fallback, multi-akun | 3–4 hari | ✅ failover + cooldown otomatis |
-| 6 | Token saver | 3 hari | laporan hemat token |
+| 6 | Token saver | 3 hari | ✅ hemat byte per request (agregasi di fase 7) |
 | 7 | Metrics, usage, log | 2 hari | dashboard-less observability |
 | 8 | Secret encryption, OAuth (opsional) | 3 hari | refresh otomatis |
 | 9 | Admin API | 2 hari | CRUD via curl |

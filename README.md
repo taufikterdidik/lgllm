@@ -145,6 +145,7 @@ internal/registry/    provider catalog, config merge, validation, model routing
 internal/upstream/    outbound HTTP client, streaming relay, stall detection
 internal/translate/   pivot IR and OpenAI/Anthropic/Gemini/Responses translators
 internal/balancer/    credential rotation, sticky sessions, cooldown/backoff
+internal/tokensaver/  tool-result compression (diff, grep, JSON, logs)
 internal/server/      listener, middleware chain, routes, /v1 handlers
 internal/version/     build metadata
 docs/PLAN.md          phase-by-phase roadmap
@@ -187,6 +188,13 @@ warm. Streams are peeked before the first byte reaches the client when a fallbac
 exists, so a provider that answers 200 and then errors does not consume the
 request. When every attempt fails, a single attempt is relayed verbatim; multiple
 attempts produce a 502 that lists each provider, model, status and error.
+
+**Large tool results are compressed, never user text.** The token saver only
+rewrites `role: tool` content. It skips failed results, keeps the head and tail of
+every payload, and appends a marker so a retry cannot compress twice. `git diff`,
+grep/status output, JSON and long logs get shape-aware filters. `X-Lgllm-Token-Saver:
+off` disables it for one request, `combos[].token_saver: false` for one combo, and
+the response header reports `saved=N/M` bytes.
 
 **Auth defaults to `localhost`.** Loopback clients are trusted so a locally
 installed CLI works with no setup; anything else must present a key. `auth.mode:

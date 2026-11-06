@@ -114,6 +114,9 @@ type Combo struct {
 	Name     string   `yaml:"name"`
 	Members  []string `yaml:"members"`
 	Strategy string   `yaml:"strategy"`
+	// TokenSaver overrides the global tokensaver.enabled for this combo when
+	// set. A pointer distinguishes "not specified" from "explicitly off".
+	TokenSaver *bool `yaml:"token_saver"`
 }
 
 // Connection is one credential for a provider.
@@ -173,6 +176,9 @@ type TokenSaver struct {
 	Enabled  bool `yaml:"enabled"`
 	MinBytes int  `yaml:"min_bytes"`
 	MaxBytes int  `yaml:"max_bytes"`
+	// Prompt is an optional system instruction appended when the saver is on
+	// (for example a terse-answer instruction). Empty leaves it untouched.
+	Prompt string `yaml:"prompt"`
 }
 
 // Default returns the configuration used when a key is absent.

@@ -390,3 +390,33 @@ func TestPlanRoundRobinRotatesStartingMember(t *testing.T) {
 			first.Attempts[0].Provider.ID, second.Attempts[0].Provider.ID)
 	}
 }
+
+func TestPlanCarriesComboTokenSaverOptOut(t *testing.T) {
+	off := false
+	cfg := shortcutConfig()
+	cfg.Combos = []config.Combo{{
+		Name:       "coding",
+		Members:    []string{"acme/acme-small"},
+		TokenSaver: &off,
+	}}
+	r, err := New(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := r.Plan("coding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.TokenSaverOff {
+		t.Error("the combo opt-out did not reach the plan")
+	}
+
+	// A plain model keeps the default (saver on).
+	plain, err := r.Plan("acme/acme-small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.TokenSaverOff {
+		t.Error("a plain target must not opt out")
+	}
+}

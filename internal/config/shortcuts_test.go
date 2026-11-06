@@ -133,3 +133,31 @@ func TestFingerprintCoversShortcuts(t *testing.T) {
 		t.Fatal("a changed alias target must change the fingerprint")
 	}
 }
+
+func TestParseTokenSaverOptions(t *testing.T) {
+	cfg, err := Parse([]byte(shortcutBase + `
+tokensaver:
+  enabled: true
+  min_bytes: 512
+  max_bytes: 4096
+  prompt: "answer tersely"
+combos:
+  - name: coding
+    members: [ds/a]
+    token_saver: false
+  - name: plain
+    members: [ds/b]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TokenSaver.Prompt != "answer tersely" {
+		t.Errorf("prompt = %q", cfg.TokenSaver.Prompt)
+	}
+	if cfg.Combos[0].TokenSaver == nil || *cfg.Combos[0].TokenSaver {
+		t.Errorf("combo opt-out = %v", cfg.Combos[0].TokenSaver)
+	}
+	if cfg.Combos[1].TokenSaver != nil {
+		t.Errorf("unspecified token_saver = %v, want nil", cfg.Combos[1].TokenSaver)
+	}
+}

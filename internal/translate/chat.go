@@ -37,6 +37,9 @@ type Message struct {
 	Parts      []Part
 	ToolCalls  []ToolCall
 	ToolCallID string
+	// ToolError marks a failed tool result. The saver never compresses one: its
+	// text is the error the model needs to act on.
+	ToolError bool
 	// Reasoning is assistant chain-of-thought. It is never sent to providers
 	// that do not declare support for it.
 	Reasoning string

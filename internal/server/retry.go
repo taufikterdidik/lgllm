@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"lgllm/internal/registry"
+	"lgllm/internal/tokensaver"
 	"lgllm/internal/translate"
 	"lgllm/internal/upstream"
 )
@@ -28,6 +29,12 @@ type generationRequest struct {
 	// session makes connection choice sticky so an upstream prompt cache stays
 	// warm across turns of the same conversation.
 	session string
+
+	// pivot is the decoded client body, present when translation or the token
+	// saver needs it. stats/saving describe what the saver did.
+	pivot  *translate.Request
+	stats  tokensaver.Stats
+	saving bool
 }
 
 // attemptFailure is one failed (provider, connection) pair, reported to the
@@ -95,8 +102,7 @@ func (s *Server) runPlan(w http.ResponseWriter, r *http.Request, req *generation
 func (s *Server) tryProvider(w http.ResponseWriter, r *http.Request, req *generationRequest, attempt registry.Attempt, moreAttempts bool, failures *[]attemptFailure) attemptOutcome {
 	provider := attempt.Provider
 
-	outbound, err := buildOutbound(req.in, provider.Format, req.body, req.payload,
-		attempt.Model, req.requested, req.stream)
+	outbound, err := buildOutbound(req, provider.Format, attempt.Model)
 	if err != nil {
 		// The client's body cannot be rendered for this provider; another
 		// member would receive the same body, so this is final.
@@ -228,6 +234,9 @@ func (s *Server) tryConnection(
 	// later attempt overwrites these before anything is written to the client.
 	w.Header().Set("X-Lgllm-Provider", provider.ID)
 	w.Header().Set("X-Lgllm-Model", model)
+	if header := tokenSaverHeader(req); header != "" {
+		w.Header().Set("X-Lgllm-Token-Saver", header)
+	}
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
@@ -266,7 +275,7 @@ func (s *Server) tryConnection(
 
 		if !needsTranslation {
 			n, relayErr := s.relayVerbatim(w, resp)
-			logRelay(log, provider, model, start, n, relayErr)
+			logRelay(log, provider, model, start, n, relayErr, req.stats)
 			return true, nil
 		}
 		stages := make([]translate.Converter, 0, 2)
@@ -283,7 +292,7 @@ func (s *Server) tryConnection(
 			stages = append(stages, translate.AnthropicIngressConverter(model))
 		}
 		n, relayErr := s.pipeConverted(w, r, resp, stages...)
-		logRelay(log, provider, model, start, n, relayErr)
+		logRelay(log, provider, model, start, n, relayErr, req.stats)
 		return true, nil
 	}
 
@@ -351,6 +360,7 @@ func (s *Server) tryConnection(
 		"stream", false,
 		"status", http.StatusOK,
 		"bytes", len(out),
+		"saved_bytes", req.stats.Saved,
 		"dur_ms", time.Since(start).Milliseconds(),
 	)
 	return true, nil

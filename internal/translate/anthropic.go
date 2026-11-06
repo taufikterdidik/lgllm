@@ -88,6 +88,7 @@ func EncodeAnthropic(r *Request) ([]byte, error) {
 				Type:      "tool_result",
 				ToolUseID: m.ToolCallID,
 				Content:   mustJSON(joinText(m.Parts)),
+				IsError:   m.ToolError,
 			})
 		case "assistant":
 			blocks := make([]anthropicBlock, 0, len(m.Parts)+len(m.ToolCalls))
@@ -337,6 +338,7 @@ func appendAnthropicMessage(req *Request, role string, blocks []anthropicBlock) 
 				Role:       "tool",
 				Parts:      []Part{{Type: "text", Text: text}},
 				ToolCallID: b.ToolUseID,
+				ToolError:  b.IsError,
 			})
 		case "thinking":
 			reasoning += b.Thinking
