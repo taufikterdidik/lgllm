@@ -105,6 +105,17 @@ Definisi selesai fase 1:
 - `lgllm -config config.yaml` jalan, `/healthz` OK, config tervalidasi dengan pesan error jelas,
   `SIGHUP` reload config.
 
+### 1b. Belum masuk fase 1 (saat fase itu selesai)
+
+- **Store/CRUD.** Belum ada paket `store`: YAML adalah satu-satunya sumber config,
+  dan belum ada cara menulis balik dari API. SQLite + CRUD masuk fase 9.
+- **Auth lanjutan.** Baru API key statis (`auth.keys`); belum ada enkripsi secret,
+  refresh token, atau OAuth — fase 8, dan OAuth web-login tetap out of scope.
+- **Observability.** Belum ada `/metrics`, usage log, harga, atau pprof — fase 7.
+- **UI / admin API.** Belum ada; fase 9–10.
+- **Provider adapter terpisah.** Registry masih satu paket Go dengan katalog;
+  adapter per format menyusul bersama translasi (fase 4).
+
 ---
 
 ## 2. Core proxy satu provider (hari 2–3) — ✅ SELESAI
@@ -169,6 +180,19 @@ Temuan lain saat stabilisasi test fase 2:
     respons JSON biasa.
 11. **Tanpa provider yang bisa dipakai, jawabannya 503, bukan 404.** 404 ambigu
     dengan "model tidak dikenal", padahal penyebabnya config kosong.
+
+### 2b. Belum masuk fase 2 (saat fase itu selesai)
+
+- **Translasi format.** Provider non-OpenAI dijawab 501; implementasinya fase 4.
+- **Fallback & multi-akun.** Connection pertama selalu dipakai, belum ada retry,
+  rotasi, atau cooldown — fase 5.
+- **Alias & combo.** Baru `provider/model`; nama pendek dan grup menyusul fase 3.
+- **Token saver.** Body diteruskan apa adanya; kompresi tool result fase 6.
+- **Observability.** Belum ada metrik, usage log, atau estimasi biaya — fase 7.
+- **Ingress Ollama native.** `/api/chat` dan `/completion` belum ada; yang tersedia
+  baru endpoint discovery (`/api/tags`, `/api/show`, `/v1/props`).
+- **Endpoint media/embedding.** Hanya chat completions; embeddings, image, audio
+  tetap out of scope v1.
 
 ---
 
@@ -299,6 +323,19 @@ combos:
   retry ke member berikutnya setelah upstream menolak baru ada di fase 5.
 - Anggota combo boleh menunjuk alias, tetapi tidak boleh menunjuk combo lain
   (nesting ditolak) supaya urutan percobaan tetap datar dan mudah dibaca di log.
+
+### 3c. Belum masuk fase 3 (saat fase itu selesai)
+
+- **Retry/fallback setelah upstream menolak.** Fase 3 hanya memilih target di
+  depan request; percobaan berikutnya, cooldown, dan rotasi multi-akun fase 5.
+- **Alias yang menunjuk combo.** Target alias hanya `provider/model` atau alias
+  lain; combo tidak bisa dirujuk dari `aliases:`.
+- **Strategi `capability`.** Baru `priority` dan `round-robin`; pemilihan
+  berdasarkan tools/vision/context belum ada.
+- **Penyimpanan & CRUD shortcut.** Alias/combo hanya dari YAML, belum bisa
+  diubah lewat API atau disimpan di SQLite (fase 9).
+- **Model allow-list per provider.** Daftar model tetap hint untuk discovery;
+  id apa pun tetap diteruskan.
 
 ---
 
@@ -502,9 +539,19 @@ Definisi selesai: matikan satu API key → request otomatis pindah, tanpa 5xx ke
   rate-limit, body asli) seperti sebelum fase 5; lebih dari satu menghasilkan
   502 dengan `attempts[]` yang menyebut provider, model, connection, status, dan
   error masing-masing. Ingress `/v1/messages` memakai envelope Anthropic.
-- Yang belum: circuit breaker per koneksi (fase 8), strategi `capability`,
-  cooldown yang bertahan setelah restart, dan pengukuran latensi/biaya per
-  kredensial sebagai dasar pemilihan.
+
+### 5b. Belum masuk fase 5 (saat fase itu selesai)
+
+- **Circuit breaker per koneksi.** Cooldown sederhana sudah ada; breaker dengan
+  ambang error dan half-open probing masuk fase 8 (opsional).
+- **Strategi `capability`.** Pemilihan member masih `priority`/`round-robin`,
+  belum berdasarkan tools/vision/context.
+- **Cooldown yang bertahan setelah restart.** State hanya di memori proses;
+  restart (atau instance lain) memulai tanpa riwayat kegagalan.
+- **Pemilihan berbasis latensi/biaya.** Belum ada pengukuran per kredensial
+  sebagai dasar urutan; sementara hanya rotasi + kesehatan.
+- **Batas percobaan yang bisa dikonfigurasi.** Semua member/koneksi dicoba;
+  belum ada `max_attempts` atau timeout total per request.
 
 ---
 
@@ -556,8 +603,17 @@ tetap benar (uji regresi manual pada 5 task).
   request dan header respons `X-Lgllm-Token-Saver: on; saved=N/M`, sehingga
   klien/UI bisa menampilkannya tanpa membuka log. Agregasi per sesi/biaya
   menyusul di fase 7.
-- Yang belum: set filter yang bisa dikonfigurasi, metrik per filter, dedupe lintas
-  tool result, dan pengukuran regresi otomatis pada 5 task agent.
+
+### 6b. Belum masuk fase 6 (saat fase itu selesai)
+
+- **Filter yang bisa dikonfigurasi.** Set filter tetap; belum ada pilihan
+  menyalakan/mematikan per jenis konten.
+- **Metrik per filter.** Baru total byte yang dihemat per request; belum ada
+  hitungan per filter atau per sesi (agregasi fase 7).
+- **Dedupe lintas tool result.** Setiap hasil dikompres sendiri; potongan yang
+  sama di beberapa tool result belum digabung.
+- **Regresi otomatis 5 task agent.** Definisi "output tetap benar" masih diuji
+  manual; belum ada harness regresi.
 
 ---
 
