@@ -26,6 +26,8 @@ type Overrides struct {
 	LogFormat string
 	// MasterKey decrypts "enc:v1:" values. It is never written back to the file.
 	MasterKey string
+	// AdminStatePath overrides where API-managed resources are read from.
+	AdminStatePath string
 }
 
 // apply installs the non-empty overrides.
@@ -67,6 +69,17 @@ func LoadWithOverrides(path string, ov Overrides) (*Config, error) {
 	}
 	cfg.Source = abs
 	cfg.Dir = filepath.Dir(abs)
+
+	if err := resolveAdminStatePath(cfg); err != nil {
+		return nil, fmt.Errorf("%s: %w", abs, err)
+	}
+	statePath := ov.AdminStatePath
+	if statePath == "" {
+		statePath = AdminStatePath(cfg)
+	}
+	if err := mergeAdminStateFile(cfg, statePath); err != nil {
+		return nil, fmt.Errorf("%s: %w", abs, err)
+	}
 
 	ov.apply(cfg)
 	if err := DecryptSecrets(cfg, ov.MasterKey); err != nil {
@@ -491,6 +504,16 @@ func (c *Config) Validate() error {
 		}
 		if c.TokenSaver.MaxBytes > 0 && c.TokenSaver.MaxBytes < c.TokenSaver.MinBytes {
 			add("tokensaver.max_bytes must be >= min_bytes")
+		}
+	}
+
+	// --- admin API ---
+	if c.Admin.Enabled {
+		if c.Admin.Token != "" && len(c.Admin.Token) < 8 {
+			add("admin.token must be at least 8 characters (or empty for loopback-only)")
+		}
+		if c.Admin.Token == "" && !isLoopbackHost(host) {
+			add("admin.enabled without admin.token requires server.listen on loopback")
 		}
 	}
 

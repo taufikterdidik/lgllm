@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"lgllm/internal/admin"
 	"lgllm/internal/auth"
 	"lgllm/internal/balancer"
 	"lgllm/internal/config"
@@ -44,6 +45,8 @@ type Server struct {
 	Usage *usagelog.Store
 	// RateLimit enforces auth.rate_limit per client key.
 	RateLimit *ratelimit.Limiter
+	// Admin owns the overlay for API-managed resources (nil disables the API).
+	Admin *admin.Manager
 
 	mux *http.ServeMux
 	srv *http.Server
@@ -64,6 +67,7 @@ type Options struct {
 	Metrics   *metrics.Metrics
 	Usage     *usagelog.Store
 	RateLimit *ratelimit.Limiter
+	Admin     *admin.Manager
 }
 
 // New builds the server and registers routes. The listener is not opened yet.
@@ -122,6 +126,7 @@ func New(opts Options) *Server {
 		Metrics:   opts.Metrics,
 		Usage:     opts.Usage,
 		RateLimit: opts.RateLimit,
+		Admin:     opts.Admin,
 		mux:       http.NewServeMux(),
 		started:   time.Now(),
 	}
@@ -141,12 +146,14 @@ func (s *Server) Handler() http.Handler {
 	//   accessLog — records the final status, including auth failures
 	//   CORS      — must answer preflight before auth can reject it
 	//   auth      — cheap rejection before any body work happens
+	//   adminAuth — management API uses its own token, not inference keys
 	//   rateLimit — per-key budget, checked only for authenticated traffic
 	//   bodyLimit — bounds only the handlers that read a body
 	var h http.Handler = s.mux
 	h = s.withBodyLimit(h)
 	h = s.withRateLimit(h)
 	h = s.withAuth(h)
+	h = s.withAdminAuth(h)
 	h = s.withCORS(h)
 	h = s.withAccessLog(h)
 	h = s.withRequestID(h)

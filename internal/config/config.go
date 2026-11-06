@@ -23,6 +23,7 @@ type Config struct {
 	TokenSaver TokenSaver `yaml:"tokensaver"`
 	Upstream   Upstream   `yaml:"upstream"`
 	Metrics    Metrics    `yaml:"metrics"`
+	Admin      Admin      `yaml:"admin"`
 
 	// Providers overrides or extends the built-in provider catalog. Only fields
 	// that are set take effect; an entry may be just "id: openai".
@@ -118,6 +119,18 @@ type Combo struct {
 	// TokenSaver overrides the global tokensaver.enabled for this combo when
 	// set. A pointer distinguishes "not specified" from "explicitly off".
 	TokenSaver *bool `yaml:"token_saver"`
+}
+
+// Admin configures the management API. It is off by default because every
+// endpoint can change credentials.
+type Admin struct {
+	Enabled bool `yaml:"enabled"`
+	// Token authenticates admin calls. When empty, only loopback clients are
+	// accepted (and a public bind is refused).
+	Token string `yaml:"token"`
+	// StateFile is where resources created through the API are stored. Empty
+	// means "admin.yaml next to the main config".
+	StateFile string `yaml:"state_file"`
 }
 
 // Metrics controls the observability surface.
@@ -233,6 +246,7 @@ func Default() Config {
 			Enabled:      true,
 			UsageLogSize: 500,
 		},
+		Admin: Admin{Enabled: false},
 		TokenSaver: TokenSaver{
 			Enabled:  true,
 			MinBytes: 2048,

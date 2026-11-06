@@ -48,3 +48,33 @@ func TestNilStoreIsSafe(t *testing.T) {
 		t.Error("nil store should be a no-op")
 	}
 }
+
+func TestSubscribeReceivesAndCancels(t *testing.T) {
+	s := New(3)
+	ch, cancel := s.Subscribe()
+	s.Add(Entry{Status: 200})
+
+	select {
+	case e := <-ch:
+		if e.Status != 200 {
+			t.Errorf("entry = %+v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subscriber received nothing")
+	}
+
+	cancel()
+	s.Add(Entry{Status: 201}) // must not panic after cancel
+	if _, ok := <-ch; ok {
+		t.Error("channel was not closed on cancel")
+	}
+}
+
+func TestNilSubscribeIsClosed(t *testing.T) {
+	var s *Store
+	ch, cancel := s.Subscribe()
+	defer cancel()
+	if _, ok := <-ch; ok {
+		t.Error("nil store subscriber should be closed")
+	}
+}

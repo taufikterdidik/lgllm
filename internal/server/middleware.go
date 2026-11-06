@@ -173,6 +173,11 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// The management API has its own credential, handled by withAdminAuth.
+		if isAdminPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		cfg := s.Config()
 		switch cfg.Auth.Mode {
@@ -306,7 +311,7 @@ func originAllowed(origin string, allow []string) bool {
 func (s *Server) withRateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions || isPublicPath(r.URL.Path) ||
-			isMonitoringPath(r.URL.Path) || s.RateLimit == nil {
+			isMonitoringPath(r.URL.Path) || isAdminPath(r.URL.Path) || s.RateLimit == nil {
 			// Monitoring must keep working when an API key is over budget.
 			next.ServeHTTP(w, r)
 			return

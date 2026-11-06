@@ -122,6 +122,34 @@ reports `completion` plus whatever `models[].capabilities` declares in the
 config. Ollama-shaped endpoints answer errors as `{"error":"..."}` (a flat
 string), not the `[OI]` envelope.
 
+### Admin API
+
+Set `admin.enabled: true` to manage providers, connections, combos and client
+keys over HTTP. It is off by default, uses its own credential (`admin.token`,
+`Authorization: Bearer ...` or `X-Admin-Token`), and never accepts inference
+keys. Without a token it is loopback-only and a public bind is refused.
+
+| Endpoint | Methods |
+|---|---|
+| `/api/providers` | `GET`, `POST`; `PUT/DELETE /api/providers/{id}` |
+| `/api/connections` | `GET`, `POST`; `PUT/DELETE /api/connections/{id}` |
+| `/api/combos` | `GET`, `POST`; `PUT/DELETE /api/combos/{name}` |
+| `/api/keys` | `GET`, `POST`; `DELETE /api/keys/{id}` |
+| `/api/usage?from=&to=&group=provider\|model\|day` | `GET` |
+| `/api/logs?limit=N` | `GET` |
+| `/api/logs/stream` | `GET` (SSE, live entries) |
+| `/api/test-connection` | `POST {"provider":"...","model":"...","connection":"..."}` |
+
+The main `config.yaml` is never rewritten (it may contain `${ENV}` references and
+comments). API-created resources live in `admin.yaml` next to it, merged at
+startup, written atomically with mode 0600, and secrets are encrypted when a
+master key is configured. Entries from `config.yaml` are listed with
+`"managed":"config"` and are read-only through the API. A mutation is validated
+against the full config and the provider catalog before it is published; a
+rejected change rolls the file back. `GET` redacts keys (`***`); sending `***`
+back keeps the stored value. When `metrics.usage_log_size` is 0 the usage and log
+endpoints are empty and the live stream is unavailable.
+
 ### Observability
 
 | Endpoint | Shape |
@@ -167,6 +195,7 @@ internal/usagelog/    in-memory ring of recent requests
 internal/pricing/     manual per-model cost table
 internal/secret/      AES-GCM encryption for credentials at rest
 internal/ratelimit/   per-key request buckets and daily token quota
+internal/admin/       management API state, overlay persistence, rollback
 internal/server/      listener, middleware chain, routes, /v1 handlers
 internal/version/     build metadata
 docs/PLAN.md          phase-by-phase roadmap
@@ -216,6 +245,14 @@ every payload, and appends a marker so a retry cannot compress twice. `git diff`
 grep/status output, JSON and long logs get shape-aware filters. `X-Lgllm-Token-Saver:
 off` disables it for one request, `combos[].token_saver: false` for one combo, and
 the response header reports `saved=N/M` bytes.
+
+**The admin API edits an overlay, not your config.** Writing back the main
+config would resolve `${ENV}` placeholders and drop comments, so API-created
+providers, connections, combos and keys go to `admin.yaml`. Each mutation is
+serialized, persisted atomically, validated end-to-end (including
+`registry.Validate`) and then swapped into the running server; a failure restores
+the previous file. Config-managed entries stay read-only, which keeps deletion
+unambiguous.
 
 **Secrets can stay encrypted on disk.** A connection key (or client key, or
 provider header) written as `enc:v1:<base64>` is AES-256-GCM ciphertext. The

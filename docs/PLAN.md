@@ -742,7 +742,12 @@ tetap benar (uji regresi manual pada 5 task).
 
 ---
 
-## 9. Admin REST API (minggu 5)
+## 9. Admin REST API (minggu 5) — ✅ SELESAI
+
+> Status: provider, connection, combo, dan client key bisa dikelola lewat HTTP;
+> usage/logs diekspos (termasuk SSE), dan `POST /api/test-connection` menguji satu
+> kredensial. Resource dari `config.yaml` bersifat read-only; resource buatan API
+> disimpan di overlay `admin.yaml`. Endpoint berjalan dengan token admin terpisah.
 
 UI nanti hanya konsumen API ini:
 ```
@@ -757,6 +762,51 @@ POST                /api/test-connection
 ```
 Autentikasi admin terpisah dari key inference (session cookie/token), default hanya
 bind localhost.
+
+### 9a. Keputusan implementasi — ✅ SELESAI
+
+- **Overlay, bukan menulis ulang config.** `config.yaml` bisa berisi `${ENV}` dan
+  komentar yang akan hancur bila di-round-trip. Resource buatan API disimpan di
+  `admin.yaml` (default di samping config, bisa diatur `admin.state_file`), lalu
+  digabung saat load. File ditulis atomik dengan mode 0600; secret dienkripsi bila
+  master key tersedia.
+- **Read-only untuk resource config.** Entri dari `config.yaml` tampil dengan
+  `"managed":"config"` dan PUT/DELETE-nya 409. Ini membuat arti "delete" tidak
+  ambigu dan mencegah API menimpa file utama.
+- **Validasi transaksional.** Setiap mutasi: clone state → tulis file → load
+  ulang config + `registry.Validate` → publish ke server. Jika gagal, file
+  dikembalikan ke isi sebelumnya dan state memory tidak berubah.
+- **Auth admin terpisah.** `admin.enabled` + `admin.token` (atau loopback-only bila
+  token kosong). Middleware inference melewati path admin, dan token inference
+  tidak diterima sebagai token admin. Bind publik tanpa token ditolak config.
+- **Redaksi.** GET connection mengembalikan `"api_key":"***"`; mengirim `***`
+  kembali mempertahankan nilai lama. Header provider yang namanya mengandung
+  key/token/secret/auth/cookie juga diredaksi; `***` pada PUT mempertahankan
+  nilai lama.
+- **Endpoint.** CRUD providers/connections/combos/keys, agregasi usage
+  (`group=provider|model|day`, filter `from`/`to`), logs mentah, SSE
+  `/api/logs/stream` (subscriber non-blocking; event lambat dibuang, bukan
+  memblokir request), dan `test-connection` yang mengirim satu request minimal
+  lalu melaporkan status/latensi.
+- **Store tetap YAML.** Belum ada SQLite; overlay adalah satu file kecil. Mutasi
+  ditulis penuh setiap kali (aman untuk ukuran v1) dan tahan restart.
+
+### 9b. Belum masuk fase 9 (saat fase itu selesai)
+
+- **SQLite / query store.** Overlay YAML ditulis ulang penuh per mutasi; belum ada
+  index, transaksi multi-tabel, atau riwayat perubahan.
+- **Session cookie / UI login.** Auth admin masih token statis; belum ada sesi,
+  CSRF, atau halaman login (fase 10).
+- **Edit resource config lewat API.** Provider/connection/combo dari `config.yaml`
+  tetap read-only; memindahkannya ke overlay harus manual.
+- **Rotasi kredensial otomatis.** Tidak ada endpoint untuk regenerate key atau
+  mengenkripsi ulang semua secret.
+- **Paginasi & filter lanjutan.** `/api/logs` hanya `limit`; usage hanya rentang
+  waktu + group, tanpa pagination atau export.
+- **Audit trail.** Perubahan admin belum dicatat ke log audit khusus selain log
+  "applied new config".
+- **Multi-tenant.** Satu token admin, satu overlay; belum ada role atau isolasi
+  per tenant.
 
 ---
 
@@ -799,7 +849,7 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 | 6 | Token saver | 3 hari | ✅ hemat byte per request (agregasi di fase 7) |
 | 7 | Metrics, usage, log | 2 hari | ✅ /metrics, /usage, pprof |
 | 8 | Secret encryption, OAuth (opsional) | 3 hari | ✅ enkripsi + rate limit (OAuth dilewati) |
-| 9 | Admin API | 2 hari | CRUD via curl |
+| 9 | Admin API | 2 hari | ✅ CRUD + usage/logs + test-connection |
 | 10 | UI (web/TUI) | 4–6 hari | dashboard |
 | 11 | Release & benchmark | 2 hari | image < 30 MB |
 

@@ -46,6 +46,17 @@ log:
   level: info # debug|info|warn|error
   format: text # text|json
 
+admin:
+  # Management API for providers, connections, combos, keys and usage.
+  # Off by default: every endpoint can change credentials.
+  enabled: false
+  # Required unless server.listen is loopback. Send it as
+  #   Authorization: Bearer <token>   or   X-Admin-Token: <token>
+  # token: ${LGLLM_ADMIN_TOKEN}
+  # API-created resources are stored here (mode 0600, secrets encrypted when a
+  # master key is configured). Defaults to admin.yaml next to this file.
+  # state_file: admin.yaml
+
 metrics:
   # GET /metrics (Prometheus text) and GET /usage (recent requests).
   enabled: true

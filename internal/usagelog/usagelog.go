@@ -35,6 +35,7 @@ type Store struct {
 	entries  []Entry
 	next     int
 	full     bool
+	subs     map[chan Entry]struct{}
 }
 
 // New returns a store holding at most capacity entries. A non-positive capacity
@@ -56,6 +57,16 @@ func (s *Store) Add(e Entry) {
 	s.next = (s.next + 1) % s.capacity
 	if s.next == 0 {
 		s.full = true
+	}
+	// Publish while holding the lock: cancel closes and removes the channel
+	// under the same lock, so a send can never race a close. The send is
+	// non-blocking; a slow /api/logs/stream subscriber drops entries instead of
+	// stalling a request.
+	for ch := range s.subs {
+		select {
+		case ch <- e:
+		default:
+		}
 	}
 	s.mu.Unlock()
 }
@@ -94,4 +105,34 @@ func (s *Store) Snapshot(limit int) []Entry {
 		out = append(out, s.entries[idx])
 	}
 	return out
+}
+
+// Subscribe returns a channel of new entries and a cancel function.
+//
+// The channel has a small buffer: a subscriber that cannot keep up loses old
+// events rather than applying backpressure to request handling.
+func (s *Store) Subscribe() (<-chan Entry, func()) {
+	if s == nil {
+		ch := make(chan Entry)
+		close(ch)
+		return ch, func() {}
+	}
+	ch := make(chan Entry, 32)
+	s.mu.Lock()
+	if s.subs == nil {
+		s.subs = make(map[chan Entry]struct{})
+	}
+	s.subs[ch] = struct{}{}
+	s.mu.Unlock()
+
+	var once sync.Once
+	cancel := func() {
+		once.Do(func() {
+			s.mu.Lock()
+			delete(s.subs, ch)
+			close(ch)
+			s.mu.Unlock()
+		})
+	}
+	return ch, cancel
 }

@@ -16,6 +16,27 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /version", s.handleVersion)
 
+	// Management API. withAdminAuth answers 404 when admin.enabled is false.
+	s.mux.HandleFunc("GET /api/providers", s.handleAdminProviders)
+	s.mux.HandleFunc("POST /api/providers", s.handleAdminProviders)
+	s.mux.HandleFunc("PUT /api/providers/{id}", s.handleAdminProvider)
+	s.mux.HandleFunc("DELETE /api/providers/{id}", s.handleAdminProvider)
+	s.mux.HandleFunc("GET /api/connections", s.handleAdminConnections)
+	s.mux.HandleFunc("POST /api/connections", s.handleAdminConnections)
+	s.mux.HandleFunc("PUT /api/connections/{id}", s.handleAdminConnection)
+	s.mux.HandleFunc("DELETE /api/connections/{id}", s.handleAdminConnection)
+	s.mux.HandleFunc("GET /api/combos", s.handleAdminCombos)
+	s.mux.HandleFunc("POST /api/combos", s.handleAdminCombos)
+	s.mux.HandleFunc("PUT /api/combos/{name}", s.handleAdminCombo)
+	s.mux.HandleFunc("DELETE /api/combos/{name}", s.handleAdminCombo)
+	s.mux.HandleFunc("GET /api/keys", s.handleAdminKeys)
+	s.mux.HandleFunc("POST /api/keys", s.handleAdminKeys)
+	s.mux.HandleFunc("DELETE /api/keys/{id}", s.handleAdminKey)
+	s.mux.HandleFunc("GET /api/usage", s.handleAdminUsage)
+	s.mux.HandleFunc("GET /api/logs", s.handleAdminLogs)
+	s.mux.HandleFunc("GET /api/logs/stream", s.handleAdminLogsStream)
+	s.mux.HandleFunc("POST /api/test-connection", s.handleAdminTestConnection)
+
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	s.mux.HandleFunc("GET /usage", s.handleUsage)
 

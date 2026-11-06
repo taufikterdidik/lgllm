@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"lgllm/internal/admin"
 	"lgllm/internal/auth"
 	"lgllm/internal/config"
 	"lgllm/internal/metrics"
@@ -114,7 +115,9 @@ func run() error {
 	// reload, so a rotated key applies without a restart.
 	verifier := auth.New(initial.Auth.Keys, initial.Auth.Mode == "off")
 
-	watcher, err := config.NewWatcher(*cfgPath, ov, logger, *configPoll, func(c *config.Config) error {
+	// apply validates and publishes a config. The watcher and the admin API use
+	// the same path, so an API mutation and a file edit cannot diverge.
+	apply := func(c *config.Config) error {
 		next, err := registry.New(c)
 		if err != nil {
 			// Reject the whole reload rather than serving with a stale provider
@@ -140,10 +143,27 @@ func run() error {
 		if c.Metrics.PprofListen != initial.Metrics.PprofListen {
 			logger.Warn("metrics.pprof_listen changed, but a restart is required to move the pprof listener")
 		}
+		if c.Admin.StateFile != initial.Admin.StateFile {
+			logger.Warn("admin.state_file changed, but a restart is required to move the admin state file")
+		}
 		return nil
-	})
+	}
+
+	watcher, err := config.NewWatcher(*cfgPath, ov, logger, *configPoll, apply)
 	if err != nil {
 		return err
+	}
+
+	// The manager owns admin.yaml. Creating it even when the API is off keeps the
+	// overlay validated at startup and lets a reload enable the API.
+	adminManager, err := admin.New(admin.Options{
+		BasePath:  *cfgPath,
+		StatePath: config.AdminStatePath(initial),
+		Overrides: ov,
+		Apply:     apply,
+	})
+	if err != nil {
+		return fmt.Errorf("admin state: %w", err)
 	}
 
 	srv := server.New(server.Options{
@@ -154,6 +174,7 @@ func run() error {
 		Upstream: upstreamClient,
 		Metrics:  metrics.New(),
 		Usage:    usagelog.New(initial.Metrics.UsageLogSize),
+		Admin:    adminManager,
 	})
 
 	// pprof gets its own listener so the API port never exposes heap dumps. The
