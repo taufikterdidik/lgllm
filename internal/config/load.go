@@ -480,6 +480,25 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// --- metrics / observability ---
+	if c.Metrics.UsageLogSize < 0 {
+		add("metrics.usage_log_size must not be negative")
+	}
+	if c.Metrics.PprofListen != "" {
+		h, p, err := net.SplitHostPort(c.Metrics.PprofListen)
+		switch {
+		case err != nil:
+			add("metrics.pprof_listen %q is not host:port: %v", c.Metrics.PprofListen, err)
+		case !isLoopbackHost(h):
+			// pprof exposes heap dumps and goroutine stacks with no auth.
+			add("metrics.pprof_listen %q must bind loopback", c.Metrics.PprofListen)
+		default:
+			if port, err := strconv.Atoi(p); err != nil || port <= 0 || port > 65535 {
+				add("metrics.pprof_listen %q has an invalid port", c.Metrics.PprofListen)
+			}
+		}
+	}
+
 	// --- upstream transport ---
 	if c.Upstream.ConnectTimeout <= 0 {
 		add("upstream.connect_timeout must be positive")

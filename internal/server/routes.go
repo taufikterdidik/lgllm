@@ -16,6 +16,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /version", s.handleVersion)
 
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
+	s.mux.HandleFunc("GET /usage", s.handleUsage)
+
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	s.mux.HandleFunc("POST /v1/messages", s.handleAnthropicMessages)
@@ -87,6 +90,8 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"GET /healthz",
 			"GET /readyz",
 			"GET /version",
+			"GET /metrics",
+			"GET /usage",
 			"GET /v1/models",
 			"GET /api/v1/models",
 			"GET /api/tags",

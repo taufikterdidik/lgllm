@@ -120,6 +120,20 @@ reports `completion` plus whatever `models[].capabilities` declares in the
 config. Ollama-shaped endpoints answer errors as `{"error":"..."}` (a flat
 string), not the `[OI]` envelope.
 
+### Observability
+
+| Endpoint | Shape |
+|---|---|
+| `GET /metrics` | Prometheus text: requests by ingress/provider/model/status, duration histogram, tokens, token-saver bytes, failed attempts |
+| `GET /usage?limit=N` | recent requests (newest first): request id, provider/model, status, duration, tokens, saved bytes, estimated cost, error |
+| `metrics.pprof_listen` | optional separate loopback listener exposing `/debug/pprof/` |
+
+`/metrics` and `/usage` sit behind the same auth as the API (only health checks
+are public), so a scraper in `auth.mode: required` needs a key. `metrics.enabled:
+false` turns both into 404s while counters keep running in memory. Costs come
+from a small manual table; an unknown model is reported as `cost_known: false`,
+not as a misleading zero.
+
 Providers are declared in `providers`/`connections`. Everything in the built-in
 catalog (anthropic, deepseek, gemini, groq, mistral, ollama, openai, openrouter)
 only needs a connection entry; a custom gateway spells out `base_url`, `format`
@@ -146,6 +160,9 @@ internal/upstream/    outbound HTTP client, streaming relay, stall detection
 internal/translate/   pivot IR and OpenAI/Anthropic/Gemini/Responses translators
 internal/balancer/    credential rotation, sticky sessions, cooldown/backoff
 internal/tokensaver/  tool-result compression (diff, grep, JSON, logs)
+internal/metrics/     Prometheus text exposition
+internal/usagelog/    in-memory ring of recent requests
+internal/pricing/     manual per-model cost table
 internal/server/      listener, middleware chain, routes, /v1 handlers
 internal/version/     build metadata
 docs/PLAN.md          phase-by-phase roadmap
@@ -195,6 +212,11 @@ every payload, and appends a marker so a retry cannot compress twice. `git diff`
 grep/status output, JSON and long logs get shape-aware filters. `X-Lgllm-Token-Saver:
 off` disables it for one request, `combos[].token_saver: false` for one combo, and
 the response header reports `saved=N/M` bytes.
+
+**Observability is local and cheap.** `/metrics` is rendered by hand (no client
+library), the usage log is a bounded in-memory ring (500 entries by default), and
+pprof gets its own loopback listener rather than sharing the API port. Request
+bodies are logged only at debug level, truncated and with keys/tokens redacted.
 
 **Auth defaults to `localhost`.** Loopback clients are trusted so a locally
 installed CLI works with no setup; anything else must present a key. `auth.mode:

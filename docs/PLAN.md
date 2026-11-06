@@ -617,7 +617,12 @@ tetap benar (uji regresi manual pada 5 task).
 
 ---
 
-## 7. Observability & operasional (minggu 4)
+## 7. Observability & operasional (minggu 4) — ✅ SELESAI
+
+> Status: `GET /metrics` menyajikan counter/histogram Prometheus tanpa dependensi
+> eksternal, `GET /usage` membaca ring buffer request terakhir, dan pprof punya
+> listener loopback terpisah. Token/biaya dihitung dari usage provider; stream
+> masih 0 token karena belum di-parse per chunk.
 
 - `GET /healthz` (liveness), `GET /readyz` (cek store), `GET /metrics` (Prometheus:
   request count/latency/token per provider), pprof di port terpisah.
@@ -626,6 +631,52 @@ tetap benar (uji regresi manual pada 5 task).
 - Tabel harga per model untuk estimasi biaya (jangan over-engineer, update manual).
 - Log terstruktur slog, level via config; log body hanya bila `debug` dan dengan redaksi
   header otorisasi.
+
+### 7a. Keputusan implementasi — ✅ SELESAI
+
+- **Metrik tanpa dependensi.** `internal/metrics` menulis format teks Prometheus
+  sendiri (counter, gauge, histogram) supaya binary tetap hanya bergantung pada
+  `yaml.v3`. Metrik: request per ingress/provider/model/status, histogram durasi,
+  token prompt/completion, byte yang dihemat token saver, dan kegagalan attempt
+  upstream (termasuk yang berhasil di-retry).
+- **Usage ring buffer.** `internal/usagelog` menyimpan N request terakhir
+  (`metrics.usage_log_size`, default 500). Entry berisi request id, ingress,
+  provider/model, status, stream, durasi, token, byte hemat, biaya, dan error.
+  `GET /usage?limit=N` mengembalikan yang terbaru lebih dulu. Ukuran buffer
+  diterapkan saat startup; mengubahnya butuh restart.
+- **Estimasi biaya.** `internal/pricing` berisi tabel manual USD per 1 juta token
+  dengan longest-prefix match (mis. `gpt-4o-mini-*` tidak memakai tarif `gpt-4o`).
+  Model yang tidak dikenal dilaporkan `cost_known: false`, bukan biaya 0 yang
+  menyesatkan.
+- **pprof terpisah.** `metrics.pprof_listen` menyalakan listener sendiri; validator
+  menolak alamat non-loopback karena pprof tidak punya autentikasi. Perubahan
+  alamat butuh restart (dicatat di log reload).
+- **Log body hanya saat debug.** Body dipotong 2 KB dan diredaksi (`sk-*`,
+  `Bearer ...`, field `api_key`/`authorization`/`token`/`secret`/`password`)
+  sebelum masuk log. Level tetap dari `log.level`.
+- **Metrik tetap jalan saat `/metrics` dimatikan.** `metrics.enabled: false`
+  membuat kedua endpoint 404, tetapi counter tetap dihitung supaya menyalakannya
+  kembali tidak memerlukan restart.
+- Token diambil dari body respons non-stream lewat decoder format yang sama
+  dengan translasi. Untuk stream, angka token masih 0 karena belum ada parser
+  usage per event.
+
+### 7b. Belum masuk fase 7 (saat fase itu selesai)
+
+- **Token untuk stream.** Usage dari event terakhir (`message_delta`,
+  `response.completed`, Gemini `usageMetadata`) belum diekstrak; stream tercatat
+  0 token.
+- **Penyimpanan persisten.** Ring buffer hilang saat restart; SQLite/usage log
+  durable belum ada (fase 9).
+- **Harga yang bisa dikonfigurasi.** Tabel harga masih di kode; belum ada
+  override lewat YAML atau API.
+- **Agregasi & dashboard.** Belum ada rollup per sesi/hari, persentase hemat
+  token, atau grafik; baru endpoint mentah.
+- **Metrik tambahan.** Belum ada lag queue, ukuran config reload, error parsing,
+  atau metrik per connection (hanya per provider).
+- **Retensi & sampling.** Semua request dicatat di ring; belum ada filter
+  sampling atau batas ukuran body respons untuk usage.
+- **Trace/span.** Belum ada OpenTelemetry; hanya request id di log dan usage.
 
 ---
 
@@ -695,7 +746,7 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 | 4 | Translasi format + stream state machine | 5–7 hari | ✅ openai ↔ anthropic/gemini/responses |
 | 5 | Combo, fallback, multi-akun | 3–4 hari | ✅ failover + cooldown otomatis |
 | 6 | Token saver | 3 hari | ✅ hemat byte per request (agregasi di fase 7) |
-| 7 | Metrics, usage, log | 2 hari | dashboard-less observability |
+| 7 | Metrics, usage, log | 2 hari | ✅ /metrics, /usage, pprof |
 | 8 | Secret encryption, OAuth (opsional) | 3 hari | refresh otomatis |
 | 9 | Admin API | 2 hari | CRUD via curl |
 | 10 | UI (web/TUI) | 4–6 hari | dashboard |

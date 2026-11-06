@@ -41,6 +41,9 @@ const (
 // OpenAI Chat Completions is the pivot every other format is translated to.
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, in ingress) {
 	log := LoggerFrom(r.Context())
+	start := time.Now()
+	s.Metrics.IncInflight()
+	defer s.Metrics.DecInflight()
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -56,6 +59,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, in ingress) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		s.badRequest(w, r, in, err)
 		return
+	}
+	if log.Enabled(r.Context(), slog.LevelDebug) {
+		// Bodies can contain prompts and pasted secrets; redact before logging
+		// and cap the record so debug output stays usable.
+		log.Debug("request body", "ingress", ingressName(in), "body", redactBody(body))
 	}
 	requested := rawString(payload["model"])
 	if strings.TrimSpace(requested) == "" {
@@ -141,6 +149,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, in ingress) {
 		pivot:     pivot,
 		stats:     stats,
 		saving:    saving,
+		start:     start,
+		requestID: RequestID(r.Context()),
 	}
 	s.runPlan(w, r, req, plan)
 }

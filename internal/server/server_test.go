@@ -11,8 +11,10 @@ import (
 
 	"lgllm/internal/auth"
 	"lgllm/internal/config"
+	"lgllm/internal/metrics"
 	"lgllm/internal/registry"
 	"lgllm/internal/upstream"
+	"lgllm/internal/usagelog"
 )
 
 func testConfig(t *testing.T, mutate func(*config.Config)) *config.Config {
@@ -54,6 +56,8 @@ func newTestServer(t *testing.T, cfg *config.Config, keys []string) *Server {
 		Auth:     auth.New(keys, cfg.Auth.Mode == "off"),
 		Registry: func() *registry.Registry { return reg },
 		Upstream: upstream.New(cfg.Upstream),
+		Metrics:  metrics.New(),
+		Usage:    usagelog.New(cfg.Metrics.UsageLogSize),
 	})
 }
 

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,9 +19,11 @@ import (
 
 	"lgllm/internal/auth"
 	"lgllm/internal/config"
+	"lgllm/internal/metrics"
 	"lgllm/internal/registry"
 	"lgllm/internal/server"
 	"lgllm/internal/upstream"
+	"lgllm/internal/usagelog"
 	"lgllm/internal/version"
 )
 
@@ -124,6 +127,12 @@ func run() error {
 			logger.Warn("server.listen changed in the config, but a restart is required to move the listener",
 				"current", initial.Server.Listen, "configured", c.Server.Listen)
 		}
+		if c.Metrics.UsageLogSize != initial.Metrics.UsageLogSize {
+			logger.Warn("metrics.usage_log_size changed, but a restart is required to resize the ring buffer")
+		}
+		if c.Metrics.PprofListen != initial.Metrics.PprofListen {
+			logger.Warn("metrics.pprof_listen changed, but a restart is required to move the pprof listener")
+		}
 		return nil
 	})
 	if err != nil {
@@ -136,7 +145,26 @@ func run() error {
 		Auth:     verifier,
 		Registry: registryPtr.Load,
 		Upstream: upstreamClient,
+		Metrics:  metrics.New(),
+		Usage:    usagelog.New(initial.Metrics.UsageLogSize),
 	})
+
+	// pprof gets its own listener so the API port never exposes heap dumps. The
+	// config validator refuses a non-loopback address.
+	var pprofSrv *http.Server
+	if initial.Metrics.PprofListen != "" {
+		pprofSrv = &http.Server{
+			Addr:              initial.Metrics.PprofListen,
+			Handler:           http.DefaultServeMux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			logger.Info("pprof listening", "listen", initial.Metrics.PprofListen)
+			if err := pprofSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("pprof listener failed", "err", err)
+			}
+		}()
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -162,6 +190,11 @@ func run() error {
 
 	if err := srv.Shutdown(context.Background()); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
+	}
+	if pprofSrv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = pprofSrv.Shutdown(ctx)
+		cancel()
 	}
 	// Release pooled upstream connections so a restart does not leave TIME_WAIT
 	// sockets lying around.

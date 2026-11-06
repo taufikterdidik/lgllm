@@ -14,8 +14,10 @@ import (
 	"lgllm/internal/auth"
 	"lgllm/internal/balancer"
 	"lgllm/internal/config"
+	"lgllm/internal/metrics"
 	"lgllm/internal/registry"
 	"lgllm/internal/upstream"
+	"lgllm/internal/usagelog"
 )
 
 // Server wraps http.Server with lgllm's routing and lifecycle.
@@ -35,6 +37,10 @@ type Server struct {
 	// Balancer remembers which credentials recently failed and rotates the
 	// healthy ones. It lives across config reloads so a cooldown survives.
 	Balancer *balancer.Balancer
+	// Metrics is the /metrics collector.
+	Metrics *metrics.Metrics
+	// Usage keeps the recent-request ring buffer (nil when disabled).
+	Usage *usagelog.Store
 
 	mux *http.ServeMux
 	srv *http.Server
@@ -52,6 +58,8 @@ type Options struct {
 	Registry func() *registry.Registry
 	Upstream *upstream.Client
 	Balancer *balancer.Balancer
+	Metrics  *metrics.Metrics
+	Usage    *usagelog.Store
 }
 
 // New builds the server and registers routes. The listener is not opened yet.
@@ -85,6 +93,10 @@ func New(opts Options) *Server {
 	if opts.Balancer == nil {
 		opts.Balancer = balancer.New()
 	}
+	if opts.Metrics == nil {
+		opts.Metrics = metrics.New()
+	}
+	// A nil Usage store is valid and means "disabled".
 	s := &Server{
 		Config:   opts.Config,
 		Log:      opts.Log,
@@ -92,6 +104,8 @@ func New(opts Options) *Server {
 		Registry: opts.Registry,
 		Upstream: opts.Upstream,
 		Balancer: opts.Balancer,
+		Metrics:  opts.Metrics,
+		Usage:    opts.Usage,
 		mux:      http.NewServeMux(),
 		started:  time.Now(),
 	}

@@ -22,6 +22,7 @@ type Config struct {
 	Log        Log        `yaml:"log"`
 	TokenSaver TokenSaver `yaml:"tokensaver"`
 	Upstream   Upstream   `yaml:"upstream"`
+	Metrics    Metrics    `yaml:"metrics"`
 
 	// Providers overrides or extends the built-in provider catalog. Only fields
 	// that are set take effect; an entry may be just "id: openai".
@@ -119,6 +120,18 @@ type Combo struct {
 	TokenSaver *bool `yaml:"token_saver"`
 }
 
+// Metrics controls the observability surface.
+type Metrics struct {
+	// Enabled serves GET /metrics and GET /usage.
+	Enabled bool `yaml:"enabled"`
+	// PprofListen starts a separate pprof listener when non-empty. It must be a
+	// loopback address: pprof has no authentication.
+	PprofListen string `yaml:"pprof_listen"`
+	// UsageLogSize is the number of recent requests kept in memory. Zero
+	// disables the ring buffer while leaving counters active.
+	UsageLogSize int `yaml:"usage_log_size"`
+}
+
 // Connection is one credential for a provider.
 type Connection struct {
 	ID string `yaml:"id"`
@@ -200,6 +213,10 @@ func Default() Config {
 			StreamIdleTimeout:     Duration(90 * time.Second),
 			StreamWriteTimeout:    Duration(30 * time.Second),
 			MaxIdleConnsPerHost:   64,
+		},
+		Metrics: Metrics{
+			Enabled:      true,
+			UsageLogSize: 500,
 		},
 		TokenSaver: TokenSaver{
 			Enabled:  true,

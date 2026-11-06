@@ -35,6 +35,11 @@ type generationRequest struct {
 	pivot  *translate.Request
 	stats  tokensaver.Stats
 	saving bool
+
+	// start and requestID tie the final log line, metrics and usage entry to one
+	// request.
+	start     time.Time
+	requestID string
 }
 
 // attemptFailure is one failed (provider, connection) pair, reported to the
@@ -69,6 +74,7 @@ func (s *Server) runPlan(w http.ResponseWriter, r *http.Request, req *generation
 			return // client hung up; there is nobody to answer
 		}
 		if !translatable(attempt.Provider.Format) {
+			s.Metrics.ObserveFailure(attempt.Provider.ID, http.StatusNotImplemented)
 			failures = append(failures, attemptFailure{
 				Provider: attempt.Provider.ID,
 				Model:    attempt.Model,
@@ -219,6 +225,7 @@ func (s *Server) tryConnection(
 			return true, nil
 		}
 		status := upstream.TransportErrorStatus(err)
+		s.Metrics.ObserveFailure(provider.ID, status)
 		cooldown := s.Balancer.Fail(conn.ID, 30*time.Second, 10*time.Minute)
 		log.Warn("upstream request failed",
 			"provider", provider.ID, "model", model, "status", status,
@@ -240,6 +247,7 @@ func (s *Server) tryConnection(
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+		s.Metrics.ObserveFailure(provider.ID, resp.StatusCode)
 		class := classifyStatus(resp.StatusCode, resp.Header)
 		cooldown := s.Balancer.Fail(conn.ID, class.base, class.max)
 		log.Warn("upstream returned an error",
@@ -262,6 +270,7 @@ func (s *Server) tryConnection(
 			err = peekStream(r.Context(), resp, s.Upstream.Options().StreamIdleTimeout.Std())
 		}
 		if err != nil {
+			s.Metrics.ObserveFailure(provider.ID, http.StatusBadGateway)
 			cooldown := s.Balancer.Fail(conn.ID, 30*time.Second, 10*time.Minute)
 			log.Warn("upstream stream started with an error or no data",
 				"provider", provider.ID, "model", model, "conn", conn.ID,
@@ -272,6 +281,9 @@ func (s *Server) tryConnection(
 			}
 		}
 		s.Balancer.Succeed(conn.ID)
+		// A stream has no usage until the provider chooses to send it; counting
+		// tokens here would require parsing every chunk. Phase 7 records zero.
+		s.recordRequest(req, provider.ID, model, http.StatusOK, 0, 0, "")
 
 		if !needsTranslation {
 			n, relayErr := s.relayVerbatim(w, resp)
@@ -298,6 +310,7 @@ func (s *Server) tryConnection(
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxTranslatedBodyBytes))
 	if err != nil {
+		s.Metrics.ObserveFailure(provider.ID, http.StatusBadGateway)
 		cooldown := s.Balancer.Fail(conn.ID, 15*time.Second, 5*time.Minute)
 		log.Warn("reading upstream response failed",
 			"provider", provider.ID, "model", model, "conn", conn.ID,
@@ -308,6 +321,7 @@ func (s *Server) tryConnection(
 		}
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
+		s.Metrics.ObserveFailure(provider.ID, http.StatusBadGateway)
 		cooldown := s.Balancer.Fail(conn.ID, 15*time.Second, 5*time.Minute)
 		log.Warn("upstream returned an empty response",
 			"provider", provider.ID, "model", model, "conn", conn.ID,
@@ -318,10 +332,14 @@ func (s *Server) tryConnection(
 		}
 	}
 
-	var out []byte
+	var (
+		out   []byte
+		usage translate.Usage
+	)
 	if needsTranslation {
 		pivot, err := translate.DecodeResponse(provider.Format, raw)
 		if err != nil {
+			s.Metrics.ObserveFailure(provider.ID, http.StatusBadGateway)
 			cooldown := s.Balancer.Fail(conn.ID, 15*time.Second, 5*time.Minute)
 			log.Warn("decoding upstream response failed",
 				"provider", provider.ID, "model", model, "conn", conn.ID,
@@ -342,11 +360,19 @@ func (s *Server) tryConnection(
 				Status: http.StatusBadGateway, Error: "encoding response: " + err.Error(),
 			}
 		}
+		usage = pivot.Usage
 	} else {
 		out = raw
+		// Metrics only: a body we cannot parse still reaches the client
+		// untouched, it just contributes no token counts.
+		if parsed, perr := translate.DecodeResponse(provider.Format, raw); perr == nil {
+			usage = parsed.Usage
+		}
 	}
 
 	s.Balancer.Succeed(conn.ID)
+	s.recordRequest(req, provider.ID, model, http.StatusOK,
+		usage.PromptTokens, usage.CompletionTokens, "")
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Length", strconv.Itoa(len(out)))
 	w.WriteHeader(http.StatusOK)
@@ -529,9 +555,24 @@ func payloadMessage(payload string) string {
 // each provider/model and its error, so debugging does not require the logs.
 func (s *Server) writeFailures(w http.ResponseWriter, req *generationRequest, plan registry.Plan, failures []attemptFailure) {
 	if len(failures) == 0 {
+		s.recordRequest(req, "", req.requested, http.StatusBadGateway, 0, 0, "no attempt could be made")
 		s.writeError(w, req.in, http.StatusBadGateway, "no attempt could be made", "upstream_error")
 		return
 	}
+
+	last := failures[len(failures)-1]
+	finalStatus := http.StatusBadGateway
+	if len(failures) == 1 {
+		finalStatus = last.Status
+		if finalStatus == 0 {
+			finalStatus = http.StatusBadGateway
+		}
+	}
+	summary := last.Error
+	if len(failures) > 1 {
+		summary = planSummary(failures)
+	}
+	s.recordRequest(req, last.Provider, last.Model, finalStatus, 0, 0, summary)
 
 	if len(failures) == 1 {
 		f := failures[0]
@@ -604,4 +645,13 @@ func sessionKey(r *http.Request, payload map[string]json.RawMessage) string {
 		}
 	}
 	return rawString(payload["prompt_cache_key"])
+}
+
+// planSummary builds the one-line reason returned when every attempt failed.
+func planSummary(failures []attemptFailure) string {
+	parts := make([]string, 0, len(failures))
+	for _, f := range failures {
+		parts = append(parts, fmt.Sprintf("%s/%s: %s", f.Provider, f.Model, f.Error))
+	}
+	return strings.Join(parts, "; ")
 }

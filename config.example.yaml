@@ -37,6 +37,16 @@ log:
   level: info # debug|info|warn|error
   format: text # text|json
 
+metrics:
+  # GET /metrics (Prometheus text) and GET /usage (recent requests).
+  enabled: true
+  # pprof runs on its own loopback listener; empty disables it. It has no auth,
+  # so a non-loopback address is refused.
+  # pprof_listen: 127.0.0.1:6060
+  # Recent requests kept in memory for /usage. 0 disables the ring buffer while
+  # leaving counters active. Resizing needs a restart.
+  usage_log_size: 500
+
 upstream:
   # TCP connect + TLS handshake.
   connect_timeout: 10s
