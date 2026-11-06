@@ -53,23 +53,25 @@ type failureKey struct {
 
 // Metrics is safe for concurrent use.
 type Metrics struct {
-	mu        sync.Mutex
-	requests  map[requestKey]int64
-	durations map[durationKey]*durationStats
-	tokens    map[tokenKey]int64
-	saved     map[providerKey]int64
-	failures  map[failureKey]int64
-	inflight  int64
+	mu          sync.Mutex
+	requests    map[requestKey]int64
+	durations   map[durationKey]*durationStats
+	tokens      map[tokenKey]int64
+	saved       map[providerKey]int64
+	failures    map[failureKey]int64
+	rateLimited map[string]int64
+	inflight    int64
 }
 
 // New returns an empty collector.
 func New() *Metrics {
 	return &Metrics{
-		requests:  make(map[requestKey]int64),
-		durations: make(map[durationKey]*durationStats),
-		tokens:    make(map[tokenKey]int64),
-		saved:     make(map[providerKey]int64),
-		failures:  make(map[failureKey]int64),
+		requests:    make(map[requestKey]int64),
+		durations:   make(map[durationKey]*durationStats),
+		tokens:      make(map[tokenKey]int64),
+		saved:       make(map[providerKey]int64),
+		failures:    make(map[failureKey]int64),
+		rateLimited: make(map[string]int64),
 	}
 }
 
@@ -139,6 +141,16 @@ func (m *Metrics) ObserveFailure(provider string, status int) {
 	m.mu.Unlock()
 }
 
+// ObserveRateLimited counts a request rejected before reaching a provider.
+func (m *Metrics) ObserveRateLimited(reason string) {
+	if reason == "" {
+		reason = "unknown"
+	}
+	m.mu.Lock()
+	m.rateLimited[reason]++
+	m.mu.Unlock()
+}
+
 // Render writes the Prometheus text exposition.
 func (m *Metrics) Render(w io.Writer) error {
 	m.mu.Lock()
@@ -185,6 +197,17 @@ func (m *Metrics) Render(w io.Writer) error {
 			for k, v := range m.saved {
 				emit(fmt.Sprintf(`provider="%s",model="%s"`,
 					esc(k.Provider), esc(k.Model)), v)
+			}
+		}); err != nil {
+		return err
+	}
+
+	if err := writeCounter(w,
+		"lgllm_rate_limited_total",
+		"Requests rejected by the per-key rate limit or daily token quota.",
+		func(emit func(labels string, value int64)) {
+			for reason, v := range m.rateLimited {
+				emit(fmt.Sprintf(`reason="%s"`, esc(reason)), v)
 			}
 		}); err != nil {
 		return err

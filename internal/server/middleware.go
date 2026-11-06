@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -295,4 +297,63 @@ func originAllowed(origin string, allow []string) bool {
 		}
 	}
 	return false
+}
+
+// withRateLimit enforces auth.rate_limit after authentication.
+//
+// The limiter is checked for every protected path, so discovery and metrics also
+// count against a client's budget. Limits default to zero (disabled).
+func (s *Server) withRateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions || isPublicPath(r.URL.Path) ||
+			isMonitoringPath(r.URL.Path) || s.RateLimit == nil {
+			// Monitoring must keep working when an API key is over budget.
+			next.ServeHTTP(w, r)
+			return
+		}
+		decision := s.RateLimit.Allow(clientIdentity(r))
+		if decision.Allowed {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if s.Metrics != nil {
+			s.Metrics.ObserveRateLimited(decision.Reason)
+		}
+		seconds := int(decision.RetryAfter.Seconds())
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+
+		message := "rate limit exceeded"
+		if decision.Reason == "quota" {
+			message = "daily token quota exhausted; the limit resets at 00:00 UTC"
+		}
+		log := LoggerFrom(r.Context())
+		log.Warn("request rejected by rate limit",
+			"reason", decision.Reason, "retry_after_s", seconds)
+		if r.URL.Path == "/v1/messages" {
+			writeAnthropicError(w, http.StatusTooManyRequests, message, "rate_limit_error")
+			return
+		}
+		writeJSONError(w, http.StatusTooManyRequests, message, "rate_limit_error")
+	})
+}
+
+// clientIdentity names the bucket a request is charged to.
+//
+// The API key is hashed so the raw credential never sits in a long-lived map; a
+// trusted loopback client without a key shares the "local" bucket.
+func clientIdentity(r *http.Request) string {
+	if token := auth.ExtractToken(r); token != "" {
+		sum := sha256.Sum256([]byte(token))
+		return "key:" + hex.EncodeToString(sum[:8])
+	}
+	return "local"
+}
+
+// isMonitoringPath lists endpoints that never consume a client's rate budget.
+func isMonitoringPath(p string) bool {
+	return p == "/metrics" || p == "/usage"
 }

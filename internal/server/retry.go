@@ -40,6 +40,8 @@ type generationRequest struct {
 	// request.
 	start     time.Time
 	requestID string
+	// clientKey is the rate-limit bucket this request was charged to.
+	clientKey string
 }
 
 // attemptFailure is one failed (provider, connection) pair, reported to the

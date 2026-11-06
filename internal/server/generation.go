@@ -151,6 +151,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, in ingress) {
 		saving:    saving,
 		start:     start,
 		requestID: RequestID(r.Context()),
+		clientKey: clientIdentity(r),
 	}
 	s.runPlan(w, r, req, plan)
 }

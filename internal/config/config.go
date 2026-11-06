@@ -176,6 +176,21 @@ type Auth struct {
 
 	// Keys accepts plaintext keys or "sha256:<hex>" digests.
 	Keys []string `yaml:"keys"`
+
+	// RateLimit applies per presented key (or to the shared "local" bucket when
+	// a loopback client is trusted without a key). Zero disables a limit.
+	RateLimit RateLimit `yaml:"rate_limit"`
+}
+
+// RateLimit bounds how much one client key may spend. TokensPerDay is a quota on
+// upstream usage, not on requests.
+type RateLimit struct {
+	// RequestsPerMinute is the refill rate of the request bucket.
+	RequestsPerMinute int `yaml:"requests_per_minute"`
+	// Burst is the bucket size; defaults to RequestsPerMinute.
+	Burst int `yaml:"burst"`
+	// TokensPerDay caps prompt+completion tokens per UTC day. Zero is unlimited.
+	TokensPerDay int `yaml:"tokens_per_day"`
 }
 
 // Log configures the slog handler.

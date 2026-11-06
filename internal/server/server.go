@@ -15,6 +15,7 @@ import (
 	"lgllm/internal/balancer"
 	"lgllm/internal/config"
 	"lgllm/internal/metrics"
+	"lgllm/internal/ratelimit"
 	"lgllm/internal/registry"
 	"lgllm/internal/upstream"
 	"lgllm/internal/usagelog"
@@ -41,6 +42,8 @@ type Server struct {
 	Metrics *metrics.Metrics
 	// Usage keeps the recent-request ring buffer (nil when disabled).
 	Usage *usagelog.Store
+	// RateLimit enforces auth.rate_limit per client key.
+	RateLimit *ratelimit.Limiter
 
 	mux *http.ServeMux
 	srv *http.Server
@@ -52,14 +55,15 @@ type Server struct {
 
 // Options are the dependencies needed to construct a Server.
 type Options struct {
-	Config   func() *config.Config
-	Log      *slog.Logger
-	Auth     *auth.Verifier
-	Registry func() *registry.Registry
-	Upstream *upstream.Client
-	Balancer *balancer.Balancer
-	Metrics  *metrics.Metrics
-	Usage    *usagelog.Store
+	Config    func() *config.Config
+	Log       *slog.Logger
+	Auth      *auth.Verifier
+	Registry  func() *registry.Registry
+	Upstream  *upstream.Client
+	Balancer  *balancer.Balancer
+	Metrics   *metrics.Metrics
+	Usage     *usagelog.Store
+	RateLimit *ratelimit.Limiter
 }
 
 // New builds the server and registers routes. The listener is not opened yet.
@@ -97,17 +101,29 @@ func New(opts Options) *Server {
 		opts.Metrics = metrics.New()
 	}
 	// A nil Usage store is valid and means "disabled".
+	if opts.RateLimit == nil {
+		cfgFn := opts.Config // keep the closure stable across reloads
+		opts.RateLimit = ratelimit.New(func() ratelimit.Config {
+			rl := cfgFn().Auth.RateLimit
+			return ratelimit.Config{
+				RequestsPerMinute: rl.RequestsPerMinute,
+				Burst:             rl.Burst,
+				TokensPerDay:      rl.TokensPerDay,
+			}
+		})
+	}
 	s := &Server{
-		Config:   opts.Config,
-		Log:      opts.Log,
-		Auth:     opts.Auth,
-		Registry: opts.Registry,
-		Upstream: opts.Upstream,
-		Balancer: opts.Balancer,
-		Metrics:  opts.Metrics,
-		Usage:    opts.Usage,
-		mux:      http.NewServeMux(),
-		started:  time.Now(),
+		Config:    opts.Config,
+		Log:       opts.Log,
+		Auth:      opts.Auth,
+		Registry:  opts.Registry,
+		Upstream:  opts.Upstream,
+		Balancer:  opts.Balancer,
+		Metrics:   opts.Metrics,
+		Usage:     opts.Usage,
+		RateLimit: opts.RateLimit,
+		mux:       http.NewServeMux(),
+		started:   time.Now(),
 	}
 	s.routes()
 	return s
@@ -125,9 +141,11 @@ func (s *Server) Handler() http.Handler {
 	//   accessLog — records the final status, including auth failures
 	//   CORS      — must answer preflight before auth can reject it
 	//   auth      — cheap rejection before any body work happens
+	//   rateLimit — per-key budget, checked only for authenticated traffic
 	//   bodyLimit — bounds only the handlers that read a body
 	var h http.Handler = s.mux
 	h = s.withBodyLimit(h)
+	h = s.withRateLimit(h)
 	h = s.withAuth(h)
 	h = s.withCORS(h)
 	h = s.withAccessLog(h)

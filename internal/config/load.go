@@ -24,6 +24,8 @@ type Overrides struct {
 	Listen    string
 	LogLevel  string
 	LogFormat string
+	// MasterKey decrypts "enc:v1:" values. It is never written back to the file.
+	MasterKey string
 }
 
 // apply installs the non-empty overrides.
@@ -67,6 +69,9 @@ func LoadWithOverrides(path string, ov Overrides) (*Config, error) {
 	cfg.Dir = filepath.Dir(abs)
 
 	ov.apply(cfg)
+	if err := DecryptSecrets(cfg, ov.MasterKey); err != nil {
+		return nil, fmt.Errorf("%s: %w", abs, err)
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", abs, err)
 	}
@@ -431,6 +436,15 @@ func (c *Config) Validate() error {
 	}
 
 	// --- auth ---
+	if c.Auth.RateLimit.RequestsPerMinute < 0 {
+		add("auth.rate_limit.requests_per_minute must not be negative")
+	}
+	if c.Auth.RateLimit.Burst < 0 {
+		add("auth.rate_limit.burst must not be negative")
+	}
+	if c.Auth.RateLimit.TokensPerDay < 0 {
+		add("auth.rate_limit.tokens_per_day must not be negative")
+	}
 	switch c.Auth.Mode {
 	case "off":
 		// Turning auth off on a public interface turns lgllm into an open relay

@@ -65,6 +65,9 @@ func (s *Server) recordRequest(req *generationRequest, provider, model string, s
 	if req.stats.Saved > 0 {
 		s.Metrics.AddSavedBytes(provider, model, req.stats.Saved)
 	}
+	if s.RateLimit != nil {
+		s.RateLimit.AddTokens(req.clientKey, promptTokens+completionTokens)
+	}
 
 	cost, known := pricing.Estimate(model, promptTokens, completionTokens)
 	s.Usage.Add(usagelog.Entry{

@@ -31,7 +31,16 @@ auth:
     # instead: printf '%s' 'sk-your-token' | sha256sum
     # - "sha256:<64 hex chars>"
     # - ${LGLLM_API_KEY}
+    # Or encrypt it (see connections below for the master key):
+    # - "enc:v1:..."
     - "dev-local-key-change-me"
+
+  # Per-client limits. Zero (the default) disables each one. The key is a hash
+  # of the presented API key; trusted loopback clients share a "local" bucket.
+  rate_limit:
+    requests_per_minute: 0 # token-bucket refill
+    burst: 0               # bucket size; defaults to requests_per_minute
+    tokens_per_day: 0      # prompt+completion tokens, resets at 00:00 UTC
 
 log:
   level: info # debug|info|warn|error
@@ -110,6 +119,11 @@ connections:
   # - id: deepseek-main
   #   provider: deepseek
   #   api_key: ${DEEPSEEK_API_KEY}
+  #
+  # Secrets can be encrypted at rest. Generate the value with
+  #   printf '%s' "$DEEPSEEK_API_KEY" | lgllm -encrypt
+  # and keep the master key in LGLLM_MASTER_KEY (or pass --master-key):
+  #   api_key: "enc:v1:..."
   #
   # - id: openrouter-main
   #   provider: or

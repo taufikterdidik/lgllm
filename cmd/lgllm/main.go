@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"lgllm/internal/config"
 	"lgllm/internal/metrics"
 	"lgllm/internal/registry"
+	"lgllm/internal/secret"
 	"lgllm/internal/server"
 	"lgllm/internal/upstream"
 	"lgllm/internal/usagelog"
@@ -45,6 +47,8 @@ func run() error {
 		checkOnly   = fs.Bool("check", false, "validate the config and exit")
 		showVersion = fs.Bool("version", false, "print build information and exit")
 		healthcheck = fs.Bool("healthcheck", false, "probe a running instance and exit 0/1 (for container health checks)")
+		masterKey   = fs.String("master-key", os.Getenv("LGLLM_MASTER_KEY"), "master key for enc:v1: secrets (prefer LGLLM_MASTER_KEY)")
+		encrypt     = fs.Bool("encrypt", false, "read a secret from stdin and print its enc:v1: form, then exit")
 	)
 	fs.Parse(os.Args[1:])
 
@@ -52,7 +56,10 @@ func run() error {
 		fmt.Printf("lgllm %s (commit %s, built %s)\n", version.Version, version.Commit, version.Date)
 		return nil
 	}
-	ov := config.Overrides{Listen: *listen, LogLevel: *logLevel, LogFormat: *logFormat}
+	ov := config.Overrides{Listen: *listen, LogLevel: *logLevel, LogFormat: *logFormat, MasterKey: *masterKey}
+	if *encrypt {
+		return encryptSecret(*masterKey)
+	}
 	if *healthcheck {
 		// A distroless image has no curl, so the binary probes itself.
 		return probe(*cfgPath, ov)
@@ -274,4 +281,31 @@ func newLogger(cfg config.Log) *slog.Logger {
 		h = slog.NewTextHandler(os.Stdout, opts)
 	}
 	return slog.New(h)
+}
+
+// encryptSecret turns a secret read from stdin into the enc:v1: form used in the
+// config. Reading from stdin keeps the plaintext out of the process list and
+// shell history.
+func encryptSecret(masterKey string) error {
+	if masterKey == "" {
+		return errors.New("set LGLLM_MASTER_KEY or pass --master-key to encrypt a secret")
+	}
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return err
+	}
+	plain := strings.TrimRight(string(raw), "\r\n")
+	if plain == "" {
+		return errors.New("no secret on stdin")
+	}
+	box, err := secret.New(masterKey)
+	if err != nil {
+		return err
+	}
+	enc, err := box.Encrypt(plain)
+	if err != nil {
+		return err
+	}
+	fmt.Println(enc)
+	return nil
 }

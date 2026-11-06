@@ -51,6 +51,8 @@ Flags:
 | `-check` | validate the config (including provider cross-references) and exit |
 | `-version` | print build information |
 | `-healthcheck` | probe a running instance and exit 0/1 |
+| `-master-key KEY` | decrypt `enc:v1:` secrets (prefer `LGLLM_MASTER_KEY`) |
+| `-encrypt` | read a secret from stdin and print its `enc:v1:` form |
 
 Reload the config without restarting with `SIGHUP` (or by editing the file, when
 polling is on). A failed reload keeps the previous config serving. Changing
@@ -163,6 +165,8 @@ internal/tokensaver/  tool-result compression (diff, grep, JSON, logs)
 internal/metrics/     Prometheus text exposition
 internal/usagelog/    in-memory ring of recent requests
 internal/pricing/     manual per-model cost table
+internal/secret/      AES-GCM encryption for credentials at rest
+internal/ratelimit/   per-key request buckets and daily token quota
 internal/server/      listener, middleware chain, routes, /v1 handlers
 internal/version/     build metadata
 docs/PLAN.md          phase-by-phase roadmap
@@ -212,6 +216,21 @@ every payload, and appends a marker so a retry cannot compress twice. `git diff`
 grep/status output, JSON and long logs get shape-aware filters. `X-Lgllm-Token-Saver:
 off` disables it for one request, `combos[].token_saver: false` for one combo, and
 the response header reports `saved=N/M` bytes.
+
+**Secrets can stay encrypted on disk.** A connection key (or client key, or
+provider header) written as `enc:v1:<base64>` is AES-256-GCM ciphertext. The
+master key comes from `LGLLM_MASTER_KEY` or `--master-key`, never from the YAML
+file. Generate a value with `printf '%s' "$KEY" | lgllm -encrypt`. A config with
+ciphertext but no key refuses to start rather than sending the ciphertext
+upstream.
+
+**Limits are per client key.** `auth.rate_limit.requests_per_minute` is a token
+bucket (with `burst`), and `tokens_per_day` is a quota charged from the usage of
+each response. The bucket key is a hash of the presented API key, or a shared
+`local` bucket for trusted loopback clients. Rejections are 429 with
+`Retry-After`, and `/metrics`/`/usage` are exempt so monitoring still works when
+a key is over budget. Limits live in memory and reset on restart; the daily quota
+resets at 00:00 UTC.
 
 **Observability is local and cheap.** `/metrics` is rendered by hand (no client
 library), the usage log is a bounded in-memory ring (500 entries by default), and

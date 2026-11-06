@@ -680,7 +680,13 @@ tetap benar (uji regresi manual pada 5 task).
 
 ---
 
-## 8. Kredensial lanjutan (opsional, minggu 5)
+## 8. Kredensial lanjutan (opsional, minggu 5) — ✅ SELESAI (tanpa OAuth/web-login)
+
+> Status: secret bisa disimpan sebagai ciphertext AES-GCM, dan `auth.rate_limit`
+> membatasi request per API key plus kuota token harian. OAuth PKCE, refresh
+> token, dan provider free-tier berbasis web login tetap **tidak** dikerjakan:
+> itu bertentangan dengan batas lingkup v1 (tanpa browser automation) dan paling
+> rawan ToS.
 
 - Enkripsi secret at-rest (AES-GCM, key dari env/`--master-key`), bukan plaintext YAML.
 - OAuth PKCE untuk provider yang memang mengizinkannya + refresh token background
@@ -688,6 +694,51 @@ tetap benar (uji regresi manual pada 5 task).
 - Rate limit per API key + kuota harian (mirip `keyAccess`).
 - Kalau tetap mau provider "free tier" berbasis web login: isolasi di build tag
   terpisah dan dokumentasikan risikonya. Jangan jadi dependency core.
+
+### 8a. Keputusan implementasi — ✅ SELESAI
+
+- **Enkripsi at-rest.** `internal/secret` memakai AES-256-GCM dengan nonce acak;
+  nilai ditulis `enc:v1:<base64(nonce||ciphertext)>`. Master key diambil dari
+  `LGLLM_MASTER_KEY` atau `--master-key`; 32 byte base64/hex dipakai langsung,
+  string ≥16 karakter di-hash SHA-256 agar passphrase bisa dipakai. Key tidak
+  pernah masuk file config.
+- **Dekripsi saat load.** `config.DecryptSecrets` mengganti `connections[].api_key`,
+  `auth.keys[]`, dan `providers[].headers` yang berprefix `enc:v1:` **di memori**
+  saja; file tidak pernah ditulis ulang. Jika ada ciphertext tetapi tidak ada
+  master key, startup ditolak dengan lokasi field yang jelas. Reload memakai
+  master key yang sama karena ikut di `Overrides`.
+- **Alat bantu.** `printf '%s' "$KEY" | lgllm -encrypt` mencetak ciphertext,
+  sehingga plaintext tidak masuk shell history atau process list.
+- **Rate limit per key.** `auth.rate_limit.requests_per_minute` + `burst` memakai
+  token bucket; `tokens_per_day` adalah kuota token (prompt+completion) yang
+  diisi dari usage respons. Bucket per identitas: hash 8 byte dari API key yang
+  dikirim, atau `local` untuk klien loopback yang dipercaya tanpa key.
+- **Penolakan.** 429 + `Retry-After`; ingress `/v1/messages` memakai envelope
+  Anthropic. `/metrics` dan `/usage` dikecualikan supaya monitoring tidak ikut
+  mati saat kuota habis. Penolakan dihitung di
+  `lgllm_rate_limited_total{reason}`.
+- **Batas dan reset.** State di memori; kuota harian direset pada 00:00 UTC.
+  Perubahan limit berlaku langsung pada reload karena limiter membaca config per
+  request.
+- **OAuth tidak diimplementasikan.** Tidak ada PKCE, refresh token, atau
+  build-tag web-login; provider yang butuh itu tetap di luar cakupan.
+
+### 8b. Belum masuk fase 8 (saat fase itu selesai)
+
+- **OAuth PKCE & refresh token.** Tidak ada alur otorisasi, single-flight refresh,
+  jitter, atau `refresh_lead_ms`.
+- **Provider free-tier berbasis web login.** Tetap out of scope; tidak ada build
+  tag terpisah karena tidak ada kode yang perlu diisolasi.
+- **Manajemen key lewat API/UI.** Key dan limit hanya dari YAML; belum ada CRUD
+  atau rotasi dari admin API (fase 9).
+- **Kuota per key yang berbeda-beda.** Semua key berbagi satu kebijakan global;
+  belum ada tabel limit per key.
+- **Persistensi & distribusi limit.** State hilang saat restart dan tidak dibagi
+  antar-instance (butuh Redis/DB bila multi-node).
+- **Rotasi master key.** Belum ada re-enkripsi massal atau dukungan dua key
+  sekaligus untuk migrasi.
+- **Audit & alarm.** Belum ada log audit khusus perubahan kredensial atau
+  notifikasi saat kuota hampir habis.
 
 ---
 
@@ -747,7 +798,7 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 | 5 | Combo, fallback, multi-akun | 3–4 hari | ✅ failover + cooldown otomatis |
 | 6 | Token saver | 3 hari | ✅ hemat byte per request (agregasi di fase 7) |
 | 7 | Metrics, usage, log | 2 hari | ✅ /metrics, /usage, pprof |
-| 8 | Secret encryption, OAuth (opsional) | 3 hari | refresh otomatis |
+| 8 | Secret encryption, OAuth (opsional) | 3 hari | ✅ enkripsi + rate limit (OAuth dilewati) |
 | 9 | Admin API | 2 hari | CRUD via curl |
 | 10 | UI (web/TUI) | 4–6 hari | dashboard |
 | 11 | Release & benchmark | 2 hari | image < 30 MB |
