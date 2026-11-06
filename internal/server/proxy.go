@@ -1,18 +1,10 @@
 package server
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
 
 	"lgllm/internal/registry"
-	"lgllm/internal/upstream"
 )
 
 // maxErrorBodyBytes caps how much of an upstream error body is relayed. A
@@ -32,217 +24,19 @@ var upstreamErrorHeaders = []string{
 	"X-RateLimit-Reset",
 }
 
-// handleChatCompletions proxies POST /v1/chat/completions.
+// handleChatCompletions serves POST /v1/chat/completions.
 //
-// Phase 2 is a passthrough: the body is forwarded in the chat-completions shape
-// to a provider that speaks it natively, and the response — streamed or not — is
-// relayed as it arrives. Providers on another wire format are refused with an
-// explicit message until the translator lands in phase 4.
+// The handler is a thin wrapper: s.serve owns routing, translation and relay so
+// /v1/messages shares the exact same path.
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	log := LoggerFrom(r.Context())
+	s.serve(w, r, ingressChat)
+}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeBadRequest(w, r, err)
-		return
-	}
-	if len(bytes.TrimSpace(body)) == 0 {
-		writeJSONError(w, http.StatusBadRequest, "request body is empty", "invalid_request_error")
-		return
-	}
-
-	// Decode into raw messages: lgllm needs only "model", and every other field
-	// (tools, response_format, vendor extensions) must survive untouched.
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil {
-		writeBadRequest(w, r, err)
-		return
-	}
-	var requested string
-	if raw, ok := payload["model"]; ok {
-		if err := json.Unmarshal(raw, &requested); err != nil {
-			writeBadRequest(w, r, errors.New(`"model" must be a string`))
-			return
-		}
-	}
-	if strings.TrimSpace(requested) == "" {
-		writeJSONError(w, http.StatusBadRequest, `field "model" is required`, "invalid_request_error")
-		return
-	}
-	var stream bool
-	if raw, ok := payload["stream"]; ok {
-		_ = json.Unmarshal(raw, &stream)
-	}
-
-	reg := s.Registry()
-	if reg.Len() == 0 {
-		// Distinct from a routing miss: the process is healthy but has nothing
-		// to route to, which is an operator problem, not a client mistake.
-		writeJSONError(w, http.StatusServiceUnavailable,
-			"no provider is usable; add a connection with a credential to the config", "no_providers")
-		return
-	}
-
-	target, err := reg.Lookup(requested)
-	if err != nil {
-		status := http.StatusNotFound
-		if errors.Is(err, registry.ErrNoDefaultProvider) {
-			status = http.StatusBadRequest
-		}
-		log.Warn("model routing failed", "model", requested, "err", err)
-		writeJSONError(w, status, err.Error(), "invalid_request_error")
-		return
-	}
-	provider, model := target.Provider, target.Model
-	log.Debug("routed request",
-		"requested", requested,
-		"provider", provider.ID,
-		"model", model,
-		"alias", target.Alias,
-		"combo", target.Combo,
-	)
-	if !provider.SupportsPassthrough() {
-		writeJSONError(w, http.StatusNotImplemented,
-			fmt.Sprintf("provider %q speaks the %q format, which needs the format translator (phase 4); use a chat-completions provider for now",
-				provider.ID, provider.Format),
-			"not_implemented")
-		return
-	}
-
-	conn, err := provider.Connection()
-	if err != nil {
-		log.Error("provider has no usable connection", "provider", provider.ID, "err", err)
-		writeJSONError(w, http.StatusBadGateway, err.Error(), "provider_unavailable")
-		return
-	}
-	base, err := provider.Endpoint(conn)
-	if err != nil {
-		log.Error("provider endpoint is invalid", "provider", provider.ID, "err", err)
-		writeJSONError(w, http.StatusBadGateway, err.Error(), "provider_misconfigured")
-		return
-	}
-
-	// Only re-encode when the model id actually changes, so the common case
-	// forwards the client's exact bytes.
-	if model != requested {
-		raw, err := json.Marshal(model)
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "cannot encode model name", "internal_error")
-			return
-		}
-		payload["model"] = raw
-		if body, err = json.Marshal(payload); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "cannot re-encode request", "internal_error")
-			return
-		}
-	}
-
-	url := strings.TrimRight(base, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		log.Error("cannot build upstream request", "url", url, "err", err)
-		writeJSONError(w, http.StatusInternalServerError, "invalid upstream endpoint", "internal_error")
-		return
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	if accept := r.Header.Get("Accept"); accept != "" {
-		req.Header.Set("Accept", accept)
-	} else if stream {
-		req.Header.Set("Accept", "text/event-stream")
-	} else {
-		req.Header.Set("Accept", "application/json")
-	}
-	// Attribution headers some providers require, plus the caller's user agent
-	// because a few providers gate on known clients. The inbound Authorization
-	// is never forwarded, so a client key cannot leak upstream.
-	for _, h := range []string{"User-Agent", "HTTP-Referer", "X-Title"} {
-		if v := r.Header.Get(h); v != "" {
-			req.Header.Set(h, v)
-		}
-	}
-	for k, v := range provider.Headers {
-		req.Header.Set(k, v)
-	}
-	applyProviderAuth(req, provider, conn)
-
-	start := time.Now()
-	resp, err := s.Upstream.Do(req, provider.Timeout)
-	if err != nil {
-		// A client that hung up is not an upstream failure, and there is nobody
-		// left to answer.
-		if r.Context().Err() != nil {
-			log.Info("client cancelled before the upstream answered",
-				"provider", provider.ID, "model", model)
-			return
-		}
-		status := upstream.TransportErrorStatus(err)
-		log.Warn("upstream request failed",
-			"provider", provider.ID, "model", model, "status", status, "err", err)
-		writeJSONError(w, status, "upstream request failed: "+err.Error(), "upstream_error")
-		return
-	}
-	defer resp.Body.Close()
-
-	// One custom header is how a user or a bug report identifies the hop.
-	w.Header().Set("X-Lgllm-Provider", provider.ID)
-	w.Header().Set("X-Lgllm-Model", model)
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		relayUpstreamError(w, resp)
-		log.Warn("upstream returned an error",
-			"provider", provider.ID, "model", model, "status", resp.StatusCode,
-			"dur_ms", time.Since(start).Milliseconds())
-		return
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/json"
-	}
-	w.Header().Set("Content-Type", contentType)
-
-	isSSE := strings.HasPrefix(contentType, "text/event-stream")
-	if isSSE {
-		// Intermediaries would otherwise buffer the whole stream: no-cache for
-		// caches, X-Accel-Buffering for nginx.
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("X-Accel-Buffering", "no")
-	} else if resp.ContentLength > 0 {
-		// A non-streamed body is copied whole, so the upstream length is still
-		// accurate and the client can size its buffer instead of waiting for
-		// chunked-encoding EOF.
-		w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
-	}
-
-	w.WriteHeader(resp.StatusCode)
-	if isSSE {
-		// Send the headers before the first token: a client should learn the
-		// stream opened immediately, and no intermediary should hold them back.
-		_ = http.NewResponseController(w).Flush()
-	}
-
-	n, err := s.Upstream.Relay(w, resp, isSSE)
-	attrs := []any{
-		"provider", provider.ID,
-		"model", model,
-		"stream", isSSE,
-		"status", resp.StatusCode,
-		"bytes", n,
-		"dur_ms", time.Since(start).Milliseconds(),
-	}
-	switch {
-	case err == nil:
-		log.Info("proxied chat completion", attrs...)
-	case errors.Is(err, upstream.ErrIdle):
-		log.Warn("upstream stream stalled; closed it", attrs...)
-	case errors.Is(err, upstream.ErrWriteTimeout):
-		log.Debug("client stopped reading; closed the stream", attrs...)
-	case r.Context().Err() != nil:
-		log.Info("client disconnected mid-stream", attrs...)
-	default:
-		log.Warn("stream ended with an error", append(attrs, "err", err)...)
-	}
+// handleAnthropicMessages serves POST /v1/messages, the dialect Anthropic
+// clients speak. The response is always Anthropic-shaped, whatever the provider
+// speaks internally.
+func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
+	s.serve(w, r, ingressAnthropic)
 }
 
 // relayUpstreamError forwards a provider error verbatim.

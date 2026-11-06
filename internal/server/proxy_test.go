@@ -163,17 +163,17 @@ func TestChatCompletionsForwardsUpstreamError(t *testing.T) {
 
 func TestChatCompletionsRejectsUnsupportedFormat(t *testing.T) {
 	cfg := testConfig(t, func(c *config.Config) {
-		c.Providers[0].Format = "anthropic"
+		c.Providers[0].Format = "ollama" // native /api/chat has no translator
 	})
 	s := newTestServer(t, cfg, nil)
 
 	res := do(s, httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"testprov/test-model","messages":[]}`)))
 	if res.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501 until the translator exists", res.Code)
+		t.Fatalf("status = %d, want 501 for a format with no translator", res.Code)
 	}
-	if !strings.Contains(res.Body.String(), "phase 4") {
-		t.Errorf("body = %s, want an explanation naming the missing phase", res.Body)
+	if !strings.Contains(res.Body.String(), "translator") {
+		t.Errorf("body = %s, want an explanation naming the missing translator", res.Body)
 	}
 }
 

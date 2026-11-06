@@ -195,7 +195,12 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 					"path", r.URL.Path, "key", auth.Mask(token), "remote", clientIP(r))
 			}
 			w.Header().Set("WWW-Authenticate", `Bearer realm="lgllm"`)
-			writeJSONError(w, http.StatusUnauthorized, "invalid or missing API key", "invalid_api_key")
+			if r.URL.Path == "/v1/messages" {
+				writeAnthropicError(w, http.StatusUnauthorized,
+					"invalid or missing API key", "authentication_error")
+			} else {
+				writeJSONError(w, http.StatusUnauthorized, "invalid or missing API key", "invalid_api_key")
+			}
 			return
 		}
 		next.ServeHTTP(w, r)

@@ -72,6 +72,11 @@ curl http://127.0.0.1:20128/v1/chat/completions \
 curl -N http://127.0.0.1:20128/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"ds/deepseek-chat","stream":true,"messages":[{"role":"user","content":"hi"}]}'
+
+# Anthropic clients: same registry, translated responses
+curl http://127.0.0.1:20128/v1/messages \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"oa/gpt-4.1","max_tokens":256,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
 Routing rules:
@@ -85,8 +90,9 @@ Routing rules:
 
 Status codes: `400` for an unroutable bare model or a bad body, `404` for an
 unknown provider prefix, `502`/`504` for a failed/slow upstream, `501` for a
-provider on a wire format phase 2 cannot speak, and `503` when no provider has a
-usable connection at all (an operator problem rather than a client mistake).
+provider format with no translator yet (native Ollama `/api/chat`), and `503` when
+no provider has a usable connection at all (an operator problem rather than a
+client mistake).
 
 ### Compatibility endpoints
 
@@ -105,8 +111,9 @@ same registry, so a model name taken from them works unchanged in
 `/props` is registered as well, so a llama.cpp client that hard-codes the native
 path works without a rewrite.
 
-They describe models; they never run one. Generation still goes through
-`/v1/chat/completions` (`/api/chat` needs the phase-4 translator). Fields that
+They describe models; they never run one. Generation goes through
+`/v1/chat/completions`, `/v1/messages`, or the provider's native generation
+endpoint reached through the translator. Fields that
 describe a local weight file (`size`, `parameter_size`, `quantization_level`,
 `modelfile`, `template`) are empty rather than invented, and `capabilities`
 reports `completion` plus whatever `models[].capabilities` declares in the
@@ -136,6 +143,7 @@ internal/config/      schema, defaults, validation, ${ENV} expansion, watcher
 internal/auth/        API key verifier (constant time, hash-only option)
 internal/registry/    provider catalog, config merge, validation, model routing
 internal/upstream/    outbound HTTP client, streaming relay, stall detection
+internal/translate/   pivot IR and OpenAI/Anthropic/Gemini/Responses translators
 internal/server/      listener, middleware chain, routes, /v1 handlers
 internal/version/     build metadata
 docs/PLAN.md          phase-by-phase roadmap
@@ -159,9 +167,14 @@ Buffering proxies (nginx, Cloudflare) are told to back off with
 fix ("context length exceeded", a bad tool-call id). Only a curated header set
 (rate-limit hints, `Retry-After`) is copied; hop-by-hop headers are recomputed.
 
-**Formatter differences are explicit.** A provider on the Anthropic wire format
-gets a 501 with an explanation until phase 4's translator exists — better than
-forwarding a chat-completions body to `/messages` and returning nonsense.
+**Format translation uses OpenAI Chat as the pivot.** `internal/translate`
+decodes the client's dialect into one request shape and encodes it for the
+provider, so adding a dialect costs one decoder plus one encoder rather than a
+pair per provider. `openai`, `anthropic`, native `gemini`, and
+`openai-responses` are supported both ways, including streaming and tool calls.
+When the client and provider speak the same dialect the body is forwarded
+byte-for-byte; only the `model` member is rewritten when routing changes it.
+`/v1/messages` speaks Anthropic to the client and can route to any provider.
 
 **Auth defaults to `localhost`.** Loopback clients are trusted so a locally
 installed CLI works with no setup; anything else must present a key. `auth.mode:

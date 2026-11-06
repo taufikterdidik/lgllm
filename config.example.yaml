@@ -56,6 +56,13 @@ upstream:
 # you set are overridden; everything else is inherited. Delete this whole section
 # if the catalog is enough.
 providers:
+  # `format` is the provider's wire protocol; the proxy translates between it and
+  # the client's dialect, streaming and tool calls included:
+  #   openai            Chat Completions (the pivot; forwarded byte-for-byte)
+  #   anthropic         Messages API; /v1/messages also gets a native passthrough
+  #   gemini            native generateContent (base_url ends at .../v1beta)
+  #   openai-responses  Responses API
+  #
   # A self-hosted or corporate gateway that is not in the catalog. A provider the
   # catalog does not know must spell out base_url, format and auth.
   # - id: mygateway

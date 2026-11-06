@@ -25,8 +25,8 @@ memberi 90% nilai, sisanya dipotong.
 | Kapabilitas | 9Router | lgllm v1 | Alasan |
 |---|---|---|---|
 | Ingress OpenAI-compatible (`/v1/chat/completions`) | ✅ | ✅ wajib | ini yang dipakai semua CLI |
-| Ingress Anthropic (`/v1/messages`) | ✅ | ✅ fase 4 | Claude Code butuh ini |
-| Ingress Gemini/responses | ✅ | fase 4 (opsional) | bisa ditunda |
+| Ingress Anthropic (`/v1/messages`) | ✅ | ✅ selesai fase 4 | Claude Code butuh ini |
+| Ingress Gemini/responses | ✅ | opsional | OpenAI Chat + Anthropic sudah cukup |
 | Egress provider API-key (OpenAI/Anthropic/Gemini/Groq/DeepSeek/OpenRouter/GLM/Ollama) | ✅ | ✅ | inti |
 | Provider OAuth / web-login / browser automation (Kiro, Cursor, Codex-web) | ✅ | ❌ | berat + rawan ToS, bukan "lightweight" |
 | Auto-fallback + multi-account round-robin | ✅ | ✅ fase 5 | pembeda utama |
@@ -302,7 +302,16 @@ combos:
 
 ---
 
-## 4. Translasi format — bagian tersulit (minggu 2)
+## 4. Translasi format — bagian tersulit (minggu 2) — ✅ SELESAI
+
+> Status: `internal/translate` memakai OpenAI Chat Completions sebagai pivot.
+> Yang sudah jalan: `openai ↔ anthropic` (request, response, streaming, tool call),
+> ingress `POST /v1/messages` untuk klien Anthropic, `openai ↔ gemini` (native
+> `generateContent`/`streamGenerateContent`), dan `openai ↔ openai-responses`.
+> Provider yang formatnya sama dengan klien tetap diteruskan byte-per-byte.
+> Yang belum: `/api/chat` & `/completion` gaya Ollama native, audio/file part, dan
+> signature blok thinking Anthropic (reasoning tidak dikirim balik ke provider
+> lain).
 
 Ini yang membuat "satu endpoint untuk semua CLI". Pakai **OpenAI Chat sebagai pivot**,
 persis seperti 9Router (`source -> openai -> target`), supaya jumlah translator
@@ -357,6 +366,34 @@ Strategi uji: golden files (request/response JSON in → out) + test round-trip
 
 Definisi selesai: Claude Code CLI dan satu tool OpenAI-compatible bisa memakai
 provider yang formatnya berbeda, streaming dan tool calling utuh.
+
+### 4a. Keputusan implementasi — ✅ SELESAI
+
+- Pintu masuk menentukan dialek respons dan envelope error: `/v1/chat/completions`
+  memakai bentuk OpenAI, `/v1/messages` memakai `{"type":"error","error":{...}}`.
+  Middleware auth ikut membedakan keduanya supaya klien Anthropic tidak menerima
+  envelope yang tidak bisa diparse.
+- Jika dialek klien dan provider sama, body diteruskan apa adanya (hanya `model`
+  yang ditulis ulang bila routing mengubahnya). Translasi hanya terjadi ketika
+  dialeknya berbeda, sehingga field vendor yang tidak dikenal tidak hilang.
+- Streaming diterjemahkan per event lewat `io.Pipe`: konverter menulis SSE ke
+  pipe, lalu `upstream.Relay` tetap memegang idle timeout dan write deadline yang
+  sama dengan passthrough. Rantai dua tahap dipakai untuk ingress Anthropic ke
+  provider non-OpenAI (`provider → OpenAI → Anthropic`).
+- `max_tokens` diisi `DefaultMaxTokens` (4096) saat klien tidak mengirimnya,
+  karena Anthropic mewajibkannya.
+- Tool call dipetakan dua arah: `tool_calls[].id` ↔ `tool_use.id`,
+  `role:"tool"` ↔ `tool_result`, dan argumen JSON yang terpotong saat streaming
+  di-flush per delta. `tool_choice` `none` diterjemahkan dengan menghapus daftar
+  tool, karena Anthropic tidak punya mode itu.
+- `reasoning_content`/blok `thinking` dibaca dari provider dan dikembalikan ke
+  klien OpenAI sebagai `reasoning_content`; signature Anthropic tidak pernah
+  dikirim ke provider lain.
+- Gambar `data:` dan URL dipetakan ke `image_url` (OpenAI), blok `image`
+  (Anthropic), `inlineData`/`fileData` (Gemini). Audio dan file dibuang.
+- Endpoint native per format: `chat/completions`, `messages`,
+  `models/{model}:generateContent`, dan `responses`. Gemini native memakai
+  `base_url` yang berakhir di `/v1beta`.
 
 ---
 
