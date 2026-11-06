@@ -395,6 +395,40 @@ provider yang formatnya berbeda, streaming dan tool calling utuh.
   `models/{model}:generateContent`, dan `responses`. Gemini native memakai
   `base_url` yang berakhir di `/v1beta`.
 
+### 4b. Belum masuk fase 4 (sengaja ditunda)
+
+Dicatat supaya tidak dianggap bug dan tidak hilang dari roadmap:
+
+- **Ingress Gemini dan OpenAI Responses.** Yang ada baru egress: klien berbicara
+  OpenAI Chat atau Anthropic, lalu diterjemahkan ke Gemini/Responses. Endpoint
+  `POST /v1/responses` dan `:generateContent` sebagai pintu masuk belum ada.
+- **Ollama native.** `POST /api/chat` dan `/api/completion` belum diterjemahkan,
+  dan provider dengan `format: ollama` masih dijawab 501.
+- **Audio dan file.** `input_audio`, `input_file`, serta part dokumen dibuang saat
+  translasi; hanya teks dan gambar yang bertahan.
+- **Signature thinking Anthropic.** Blok `thinking` dibaca sebagai
+  `reasoning_content`, tetapi `signature`-nya tidak disimpan, jadi tidak bisa
+  dikirim balik ke Anthropic pada turn berikutnya. Untuk provider lain, reasoning
+  tetap tidak dikirim.
+- **Reasoning ke klien Anthropic.** Ingress `/v1/messages` belum memancarkan
+  `thinking_delta`; `reasoning_content` dari upstream OpenAI/Gemini hanya memicu
+  blok teks, isinya tidak diteruskan.
+- **Prompt caching.** `cache_control` Anthropic tidak dibuat otomatis dan tidak
+  diterjemahkan; `cache_read_input_tokens` hanya dilaporkan kalau provider
+  mengirimnya.
+- **Parameter generasi lanjutan.** `response_format`/JSON schema, `n`, `logprobs`,
+  `presence_penalty`, `frequency_penalty`, `seed`, dan `user` belum dipetakan ke
+  Gemini (`responseMimeType`/`responseSchema`) atau Anthropic.
+- **Fitur server-side provider.** Tool bawaan (web search, computer use, code
+  interpreter), citations, dan multimodal output dibuang karena tidak punya
+  padanan lintas provider.
+- **`/v1/messages/count_tokens`.** Belum ada; Claude Code memakai endpoint ini
+  untuk estimasi, dan saat ini akan mendapat 404.
+- **Envelope error lintas dialek untuk egress chat.** Error provider tetap
+  direlai verbatim; provider Anthropic yang error bisa mengirim envelope
+  Anthropic ke klien `/v1/chat/completions`. Ingress `/v1/messages` sudah
+  menerjemahkan envelope-nya.
+
 ---
 
 ## 5. Router: combo, fallback, multi-akun (minggu 3)
