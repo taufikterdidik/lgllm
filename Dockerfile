@@ -1,7 +1,10 @@
 # Multi-stage build: the final image contains only the static binary.
-# CGO is disabled, so the result is a single scratch-compatible executable.
+# CGO is disabled, so the result is a scratch-compatible executable.
 
 FROM golang:1.24-alpine AS build
+
+# ca-certificates and tzdata are copied into the scratch image below.
+RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /src
 

@@ -1,0 +1,37 @@
+[Unit]
+Description=lgllm LLM proxy
+Documentation=https://github.com/taufik/lgllm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lgllm
+Group=lgllm
+# Configuration lives in /etc/lgllm/config.yaml; secrets can be supplied via the
+# environment file instead of being stored on disk.
+ExecStart=/usr/local/bin/lgllm -config /etc/lgllm/config.yaml
+EnvironmentFile=-/etc/lgllm/env
+Restart=on-failure
+RestartSec=2s
+# Matches server.shutdown_timeout in the example config.
+TimeoutStopSec=15s
+LimitNOFILE=65536
+
+# API-created resources (admin.state_file) must live under StateDirectory, since
+# ProtectSystem makes /etc read-only. Set:
+#   admin.state_file: /var/lib/lgllm/admin.yaml
+StateDirectory=lgllm
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -9,7 +9,7 @@ LDFLAGS := -s -w \
 	-X lgllm/internal/version.Commit=$(COMMIT) \
 	-X lgllm/internal/version.Date=$(DATE)
 
-.PHONY: all build run test race vet fmt check clean install tidy
+.PHONY: all build run test race vet fmt check clean install tidy snapshot bench image-size
 
 all: check build
 
@@ -46,3 +46,16 @@ tidy:
 # Size and startup baseline for the lightweight goal (phase 11 tracks trends).
 size: build
 	@ls -lh bin/$(BINARY) | awk '{print "binary:", $$5}'
+
+# Release snapshot: cross-compiles every target without publishing anything.
+snapshot:
+	goreleaser release --snapshot --clean
+
+# Local numbers: binary, cold start, RSS, latency, throughput.
+bench:
+	python3 scripts/bench.py
+
+# Scratch image size, the "image < 30 MB" target.
+image-size:
+	@docker build -q -t lgllm:dev . >/dev/null
+	@docker image inspect lgllm:dev --format '{{.Size}}' | awk '{printf "image: %.1f MB\n", $$1/1024/1024}'

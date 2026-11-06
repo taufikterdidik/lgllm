@@ -4,15 +4,13 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phase 2 complete** — a working streaming proxy in front of any
-chat-completions provider, model routing by provider prefix, and provider
-credentials from one YAML file. Format translation (Anthropic/Gemini/Responses)
-lands in phase 4. See [`docs/PLAN.md`](docs/PLAN.md) for the roadmap.
-
-Progress: phase 1 (skeleton, config, auth, server) and phase 2 (single-provider
-streaming passthrough, provider registry, routing) are done and covered by tests,
-plus the discovery compatibility endpoints (`/api/v1/models`, `/api/tags`,
-`/api/show`, `/v1/props`).
+**Status: phases 1–11 implemented.** Streaming proxy, declarative provider
+registry, aliases/combos with prefix inference, format translation
+(OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
+and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
+per-key rate limits, an admin REST API with an embedded web UI, and packaging
+benchmarks. 9Router parity is not the goal; see [`docs/PLAN.md`](docs/PLAN.md) for
+the phase-by-phase scope and what each phase deliberately leaves out.
 
 ## Why
 
@@ -33,6 +31,21 @@ make build                 # -> bin/lgllm
 cp config.example.yaml config.yaml
 ./bin/lgllm -config config.yaml
 ```
+
+Other entry points:
+
+```bash
+make check                 # gofmt + vet + test
+make snapshot              # cross-platform archives via goreleaser
+make image-size            # scratch image, prints its size
+make bench                 # local size/start/RSS/latency/throughput numbers
+```
+
+The Docker image is `scratch` + the static binary, CA certificates and tzdata:
+8.7 MB in the benchmark run. A systemd unit and package post-install script live
+in [`deploy/`](deploy/), and release archives are produced by
+[`.goreleaser.yaml`](.goreleaser.yaml) (deb/rpm/apk plus linux/darwin/windows
+amd64+arm64). Measured numbers and methodology: [`docs/BENCH.md`](docs/BENCH.md).
 
 ```bash
 curl localhost:20128/healthz
@@ -174,6 +187,51 @@ are public), so a scraper in `auth.mode: required` needs a key. `metrics.enabled
 false` turns both into 404s while counters keep running in memory. Costs come
 from a small manual table; an unknown model is reported as `cost_known: false`,
 not as a misleading zero.
+
+### Client integration
+
+Both ingress dialects are available. Use a `provider/model`, an alias, or a combo
+name from `GET /v1/models` as the model.
+
+**Claude Code** (Anthropic ingress, translated to any provider):
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:20128
+export ANTHROPIC_AUTH_TOKEN=sk-your-lgllm-key   # optional in auth.mode: localhost
+claude --model cc/claude-sonnet-4-5             # or an alias such as "fast"
+```
+
+**Cline / Continue** (OpenAI-compatible): base URL
+`http://127.0.0.1:20128/v1`, API key from `auth.keys` (any string in loopback
+mode), model e.g. `ds/deepseek-chat`, `oa/gpt-4.1`, or a combo name.
+
+**OpenCode** (`opencode.json`):
+
+```json
+{
+  "provider": {
+    "lgllm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "baseURL": "http://127.0.0.1:20128/v1", "apiKey": "sk-your-lgllm-key" },
+      "models": { "fast": { "name": "fast" } }
+    }
+  }
+}
+```
+
+**Codex CLI** (`~/.codex/config.toml`). The `/v1/responses` ingress is not
+implemented, so use the chat wire API:
+
+```toml
+model = "oa/gpt-4.1"
+model_provider = "lgllm"
+
+[model_providers.lgllm]
+name = "lgllm"
+base_url = "http://127.0.0.1:20128/v1"
+env_key = "LGLLM_API_KEY"
+wire_api = "chat"
+```
 
 Providers are declared in `providers`/`connections`. Everything in the built-in
 catalog (anthropic, deepseek, gemini, groq, mistral, ollama, openai, openrouter)

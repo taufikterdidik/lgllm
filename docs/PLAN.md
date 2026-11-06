@@ -865,7 +865,13 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 
 ---
 
-## 11. Packaging & benchmark (minggu 6)
+## 11. Packaging & benchmark (minggu 6) — ✅ SELESAI
+
+> Status: `.goreleaser.yaml` menargetkan linux/darwin/windows amd64+arm64 plus
+> paket deb/rpm/apk, image `scratch` 8.7 MB, unit systemd + post-install, dan
+> `scripts/bench.py` yang mengukur ukuran/cold start/RSS/latensi/throughput.
+> Hasil dan metodologi ada di `docs/BENCH.md`. Publikasi rilis dan tap Homebrew
+> belum dijalankan (tidak ada remote/tap).
 
 - `goreleaser`: linux/darwin/windows amd64+arm64, CGO_ENABLED=0, `-trimpath -ldflags "-s -w"`.
 - Docker multi-stage → `gcr.io/distroless/static` atau `scratch`; image < 30 MB.
@@ -874,6 +880,51 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
   cold start, overhead latency p50/p99, request/detik.
 - Dokumentasi: README, contoh `config.yaml`, panduan integrasi
   Claude Code / Cline / Continue / OpenCode / Codex.
+
+### 11a. Keputusan implementasi — ✅ SELESAI
+
+- **Rilis lintas platform.** `.goreleaser.yaml` (v2) membangun linux/darwin/windows
+  amd64+arm64 dengan `CGO_ENABLED=0`, `-trimpath`, `-s -w`, menulis checksum, dan
+  membuat paket deb/rpm/apk berisi unit systemd + contoh config. Snapshot lokal:
+  `make snapshot` (`goreleaser release --snapshot --clean`).
+- **Image kecil.** Dockerfile multi-stage → `scratch`; CA bundle dan tzdata
+  diambil dari stage build (`apk add ca-certificates tzdata`). Image terukur
+  **8.7 MB**; container diuji dengan config read-only dan `/healthz` menjawab 200.
+- **Operasional.** `deploy/lgllm.service` menjalankan binary sebagai user
+  `lgllm`, dengan hardening (`NoNewPrivileges`, `ProtectSystem=strict`,
+  `PrivateTmp`, dst.) dan `StateDirectory=lgllm` untuk `admin.state_file`.
+  `deploy/package-postinstall.sh` membuat user/direktori dan mencetak langkah
+  berikutnya tanpa menyalakan service diam-diam.
+- **Benchmark yang bisa diulang.** `scripts/bench.py` (stdlib Python) membuat mock
+  upstream, config sementara, menjalankan binary, lalu mengukur ukuran binary,
+  cold start, RSS idle/streaming, latensi p50/p95/p99, overhead vs upstream
+  langsung, throughput keep-alive, dan rata-rata streaming. `make bench` dan
+  `make image-size` adalah pintu masuknya.
+- **Hasil (i3-4330, loopback, 2026-11-07):** binary 8.97 MB, image 8.7 MB, cold
+  start 5.1 ms, RSS idle 13.9 MB / streaming 20.0 MB, p50 0.39 ms, p99 0.78 ms,
+  overhead p50 0.16 ms, 2398 req/s (32 klien). Detail di `docs/BENCH.md`.
+- **Dokumentasi integrasi.** README memuat contoh Claude Code (ingress
+  `/v1/messages`), Cline/Continue, OpenCode, dan Codex CLI dengan
+  `wire_api = "chat"` karena ingress `/v1/responses` belum ada.
+- **Perbandingan 9Router.** Tidak diotomasi (butuh instance/kredensial sendiri);
+  metodologi membandingkan di mesin yang sama didokumentasikan, bukan klaim angka.
+
+### 11b. Belum masuk fase 11 (saat fase itu selesai)
+
+- **Publikasi rilis.** Belum ada tag/remote, upload GitHub Releases, atau tap
+  Homebrew; `brews` masih dikomentari.
+- **Tanda tangan & supply chain.** Belum ada cosign/Sigstore, SBOM (Syft),
+  SLSA provenance, atau signing paket.
+- **Multi-arch image & registry.** Image belum dipublikasikan; manifest
+  amd64+arm64, digest pinning, dan pemindaian kerentanan belum dijalankan.
+- **Benchmark vs 9Router.** Belum dijalankan otomatis; hanya metodologi.
+- **Soak/load test.** Belum ada k6/wrk jangka panjang, uji memori bocor, atau
+  uji jaringan lambat/putus.
+- **Hardware/OS lain.** Build lintas platform dibuat, tetapi runtime macOS,
+  Windows, dan ARM (Raspberry Pi) belum diuji di CI.
+- **Auto-update & notifikasi versi.** Tidak ada pemeriksaan rilis terbaru.
+- **Homebrew/systemd di distro nyata.** Unit dan post-install belum diuji di
+  Debian/Fedora/Alpine bersih.
 
 ---
 
@@ -891,7 +942,7 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 | 8 | Secret encryption, OAuth (opsional) | 3 hari | ✅ enkripsi + rate limit (OAuth dilewati) |
 | 9 | Admin API | 2 hari | ✅ CRUD + usage/logs + test-connection |
 | 10 | UI (web/TUI) | 4–6 hari | ✅ web minimal embedded (tanpa Node) |
-| 11 | Release & benchmark | 2 hari | image < 30 MB |
+| 11 | Release & benchmark | 2 hari | ✅ image 8.7 MB + BENCH.md |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

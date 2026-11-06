@@ -1,0 +1,95 @@
+# goreleaser configuration for lgllm.
+#
+# Verify with: goreleaser check
+# Snapshot:    goreleaser release --snapshot --clean
+version: 2
+
+project_name: lgllm
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: lgllm
+    main: ./cmd/lgllm
+    binary: lgllm
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X lgllm/internal/version.Version={{ .Version }}
+      - -X lgllm/internal/version.Commit={{ .Commit }}
+      - -X lgllm/internal/version.Date={{ .Date }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - config.example.yaml
+      - docs/PLAN.md
+      - deploy/lgllm.service
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+nfpms:
+  - id: packages
+    package_name: lgllm
+    vendor: lgllm
+    homepage: https://github.com/taufik/lgllm
+    maintainer: taufik <mr@taufik.my.id>
+    description: |-
+      Lightweight OpenAI/Anthropic-compatible LLM proxy with provider
+      fallback, format translation and a token saver.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    contents:
+      - src: deploy/lgllm.service
+        dst: /lib/systemd/system/lgllm.service
+      - src: config.example.yaml
+        dst: /etc/lgllm/config.example.yaml
+        type: config|noreplace
+    scripts:
+      postinstall: deploy/package-postinstall.sh
+
+# Homebrew tap is optional and needs a repository that actually exists. Enable
+# after creating one:
+#
+# brews:
+#   - repository:
+#       owner: taufik
+#       name: homebrew-lgllm
+#     directory: Formula
+#     homepage: https://github.com/taufik/lgllm
+#     description: Lightweight OpenAI/Anthropic-compatible LLM proxy
+#     license: MIT
+#     install: |
+#       bin.install "lgllm"
+#       (etc/"lgllm").install "config.example.yaml"
+#     test: |
+#       system "#{bin}/lgllm", "-version"
