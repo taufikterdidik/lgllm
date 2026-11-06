@@ -1,0 +1,77 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --panel: #161a21;
+  --line: #262c36;
+  --text: #e6e9ef;
+  --muted: #8b93a3;
+  --accent: #6ea8fe;
+  --danger: #f2777a;
+  --ok: #7ec699;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.brand { display: flex; gap: 8px; align-items: baseline; }
+.brand strong { color: var(--accent); letter-spacing: 0.04em; }
+.muted { color: var(--muted); }
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+  background: #1d232d;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 9px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.active { border-color: var(--accent); color: var(--accent); }
+button.danger { color: var(--danger); }
+nav { display: flex; gap: 6px; flex-wrap: wrap; }
+.token { display: flex; gap: 6px; margin-left: auto; align-items: center; }
+
+main { padding: 18px 16px 40px; max-width: 1200px; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: normal; }
+tr:hover td { background: #141922; }
+
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.pill { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 12px; color: var(--muted); }
+.pill.admin { border-color: var(--accent); color: var(--accent); }
+.pill.ok { border-color: var(--ok); color: var(--ok); }
+.pill.bad { border-color: var(--danger); color: var(--danger); }
+
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; width: min(720px, 92vw); }
+dialog::backdrop { background: #000a; }
+dialog textarea { width: 100%; min-height: 260px; resize: vertical; }
+dialog menu { display: flex; gap: 8px; justify-content: flex-end; padding: 0; margin-top: 12px; }
+
+pre { background: #10141b; border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; }
+
+.log-line { white-space: pre-wrap; border-bottom: 1px solid var(--line); padding: 4px 0; }
+.log-line .t { color: var(--muted); margin-right: 8px; }
+.error { color: var(--danger); }
+.ok { color: var(--ok); }
+
+footer { padding: 0 16px 24px; }

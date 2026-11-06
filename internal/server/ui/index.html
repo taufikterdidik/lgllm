@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lgllm admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <strong>lgllm</strong>
+      <span id="version" class="muted"></span>
+    </div>
+    <nav id="tabs">
+      <button data-tab="providers" class="active">Providers</button>
+      <button data-tab="connections">Connections</button>
+      <button data-tab="combos">Combos</button>
+      <button data-tab="keys">Keys</button>
+      <button data-tab="usage">Usage</button>
+      <button data-tab="logs">Logs</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+    <div class="token">
+      <input id="token" type="password" placeholder="admin token" autocomplete="off">
+      <button id="save-token">Save</button>
+      <span id="status" class="muted"></span>
+    </div>
+  </header>
+  <main id="view"></main>
+  <footer class="muted">
+    Admin API only. Inference traffic does not use this token.
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>

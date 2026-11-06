@@ -150,6 +150,17 @@ rejected change rolls the file back. `GET` redacts keys (`***`); sending `***`
 back keeps the stored value. When `metrics.usage_log_size` is 0 the usage and log
 endpoints are empty and the live stream is unavailable.
 
+### Admin UI
+
+With `admin.enabled: true`, open `http://127.0.0.1:20128/ui/` and paste the admin
+token. The page is plain HTML/CSS/JS embedded in the binary (no Node, no asset
+directory) and has tabs for providers, connections, combos, keys, usage, live
+logs, and settings. It calls the admin API with `X-Admin-Token`; the token is kept
+in `localStorage` for that browser only. Static assets carry a strict
+`Content-Security-Policy` and are served without an inference key, while every
+API call still needs the admin token. When the admin API is off, `/ui/` answers
+404.
+
 ### Observability
 
 | Endpoint | Shape |
@@ -196,6 +207,7 @@ internal/pricing/     manual per-model cost table
 internal/secret/      AES-GCM encryption for credentials at rest
 internal/ratelimit/   per-key request buckets and daily token quota
 internal/admin/       management API state, overlay persistence, rollback
+internal/server/ui/   embedded admin UI (plain HTML/CSS/JS, no Node build)
 internal/server/      listener, middleware chain, routes, /v1 handlers
 internal/version/     build metadata
 docs/PLAN.md          phase-by-phase roadmap

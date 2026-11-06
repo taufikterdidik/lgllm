@@ -221,7 +221,9 @@ func isPublicPath(p string) bool {
 	case "/healthz", "/readyz", "/version":
 		return true
 	}
-	return false
+	// The management UI is static and carries no credentials; its API calls are
+	// still gated by withAdminAuth.
+	return p == "/ui" || strings.HasPrefix(p, "/ui/")
 }
 
 // isLoopbackRemote reports whether the transport peer is on the loopback

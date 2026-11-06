@@ -37,6 +37,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/logs/stream", s.handleAdminLogsStream)
 	s.mux.HandleFunc("POST /api/test-connection", s.handleAdminTestConnection)
 
+	// Embedded admin UI (option A: no Node, no asset directory).
+	s.mux.Handle("GET /ui/", s.uiHandler())
+	s.mux.HandleFunc("GET /ui", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
+	})
+
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	s.mux.HandleFunc("GET /usage", s.handleUsage)
 
@@ -113,6 +119,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"GET /version",
 			"GET /metrics",
 			"GET /usage",
+			"GET /ui/ (admin)",
 			"GET /v1/models",
 			"GET /api/v1/models",
 			"GET /api/tags",

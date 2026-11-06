@@ -810,7 +810,11 @@ bind localhost.
 
 ---
 
-## 10. UI opsional (minggu 6, hanya setelah core stabil)
+## 10. UI opsional (minggu 6, hanya setelah core stabil) — ✅ SELESAI (opsi A, tanpa build Node)
+
+> Status: dashboard web minimal di-`go:embed`, ditulis dengan HTML/CSS/JS biasa
+> tanpa langkah build. Tab Providers/Connections/Combos/Keys/Usage/Logs
+> (SSE)/Settings memakai admin API yang sudah ada. TUI (opsi B) tidak dikerjakan.
 
 Dua opsi, pilih salah satu:
 
@@ -822,6 +826,42 @@ B. **TUI** (bubbletea) — untuk yang benar-benar ingin "lightweight": kelola ko
    lihat log live, lihat usage dari terminal. Binary tetap satu, tanpa aset web.
 
 Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain.
+
+### 10a. Keputusan implementasi — ✅ SELESAI
+
+- **Opsi A tanpa toolchain Node.** Alih-alih Svelte/Vite, UI ditulis sebagai tiga
+  file (`index.html`, `style.css`, `app.js`) dan di-`embed` ke binary. Tidak ada
+  langkah build, `node_modules`, atau aset runtime; `go build` tetap satu-satunya
+  yang dibutuhkan.
+- **Konsumsi admin API yang sama.** Token admin dimasukkan di halaman dan disimpan
+  di `localStorage` browser. Resource config tampil read-only; resource admin bisa
+  diedit/dihapus. Key selalu tampil `***`.
+- **Fitur:** daftar + tambah/edit/hapus provider, connection, combo; tambah/hapus
+  client key; usage dengan group provider/model/day; log live lewat SSE
+  (`fetch` streaming, karena `EventSource` tidak bisa mengirim header token);
+  tombol "Test" per provider; halaman Settings berisi versi/readiness.
+- **Keamanan.** Halaman statis dilayani tanpa key inference, tetapi setiap panggilan
+  API tetap butuh token admin. CSP ketat (`default-src 'self'`), `nosniff`,
+  `Referrer-Policy: no-referrer`. UI hanya aktif saat `admin.enabled`.
+- **Tanpa framework.** Semua rendering memakai `textContent`/DOM API, bukan
+  `innerHTML` dengan data server, sehingga nama provider/model tidak bisa menjadi
+  HTML.
+
+### 10b. Belum masuk fase 10 (saat fase itu selesai)
+
+- **TUI (opsi B).** Tidak dibuat; belum ada bubbletea atau klien terminal.
+- **Build pipeline SPA.** Tidak ada Svelte/Vite/bundler; UI sengaja ditulis tangan
+  agar binary tidak bergantung pada Node.
+- **Edit settings dari UI.** Settings hanya menampilkan versi/readiness; config,
+  limit, token, dan harga tetap diedit di file.
+- **Login/sesi UI.** Token disimpan di `localStorage`; belum ada cookie sesi,
+  CSRF, atau logout server-side.
+- **Pagination/filter tabel.** Daftar memuat semua entri; usage hanya rentang
+  waktu + group.
+- **Streaming log yang tahan reconnect.** Tidak ada resume dari event terakhir;
+  reconnect memulai dari event baru.
+- **i18n dan tema.** Teks Inggris, tema gelap saja.
+- **Aksesibilitas lanjutan.** Belum diuji dengan screen reader atau keyboard-only.
 
 ---
 
@@ -850,7 +890,7 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 | 7 | Metrics, usage, log | 2 hari | ✅ /metrics, /usage, pprof |
 | 8 | Secret encryption, OAuth (opsional) | 3 hari | ✅ enkripsi + rate limit (OAuth dilewati) |
 | 9 | Admin API | 2 hari | ✅ CRUD + usage/logs + test-connection |
-| 10 | UI (web/TUI) | 4–6 hari | dashboard |
+| 10 | UI (web/TUI) | 4–6 hari | ✅ web minimal embedded (tanpa Node) |
 | 11 | Release & benchmark | 2 hari | image < 30 MB |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
