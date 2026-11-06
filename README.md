@@ -10,7 +10,9 @@ credentials from one YAML file. Format translation (Anthropic/Gemini/Responses)
 lands in phase 4. See [`docs/PLAN.md`](docs/PLAN.md) for the roadmap.
 
 Progress: phase 1 (skeleton, config, auth, server) and phase 2 (single-provider
-streaming passthrough, provider registry, routing) are done and covered by tests.
+streaming passthrough, provider registry, routing) are done and covered by tests,
+plus the discovery compatibility endpoints (`/api/v1/models`, `/api/tags`,
+`/api/show`, `/v1/props`).
 
 ## Why
 
@@ -85,6 +87,31 @@ Status codes: `400` for an unroutable bare model or a bad body, `404` for an
 unknown provider prefix, `502`/`504` for a failed/slow upstream, `501` for a
 provider on a wire format phase 2 cannot speak, and `503` when no provider has a
 usable connection at all (an operator problem rather than a client mistake).
+
+### Compatibility endpoints
+
+Client tools sometimes probe a different server's dialect before they will talk
+to a proxy. These read-only endpoints answer in that dialect, sourced from the
+same registry, so a model name taken from them works unchanged in
+`/v1/chat/completions`:
+
+| Endpoint | Shape |
+|---|---|
+| `GET /api/v1/models` | identical to `GET /v1/models` (pure alias) |
+| `GET /api/tags` | Ollama `ListResponse`: `{"models":[{name, model, modified_at, size, digest, details, capabilities}]}` |
+| `GET,POST /api/show` | Ollama `ShowResponse`; body `{"model":"..."}` or `?model=` |
+| `GET /v1/props` | llama.cpp `/props`: `model_alias`, `n_ctx`, `modalities`, `build_info` |
+
+`/props` is registered as well, so a llama.cpp client that hard-codes the native
+path works without a rewrite.
+
+They describe models; they never run one. Generation still goes through
+`/v1/chat/completions` (`/api/chat` needs the phase-4 translator). Fields that
+describe a local weight file (`size`, `parameter_size`, `quantization_level`,
+`modelfile`, `template`) are empty rather than invented, and `capabilities`
+reports `completion` plus whatever `models[].capabilities` declares in the
+config. Ollama-shaped endpoints answer errors as `{"error":"..."}` (a flat
+string), not the `[OI]` envelope.
 
 Providers are declared in `providers`/`connections`. Everything in the built-in
 catalog (anthropic, deepseek, gemini, groq, mistral, ollama, openai, openrouter)

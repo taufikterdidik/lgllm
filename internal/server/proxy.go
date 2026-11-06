@@ -290,22 +290,29 @@ type modelObject struct {
 	OwnedBy string `json:"owned_by"`
 }
 
+// modelRef is the client-facing model id: provider alias (or id) plus the
+// upstream model id, e.g. "ds/deepseek-chat". Every listing endpoint uses it so
+// a name taken from a list always works as a request's "model".
+func modelRef(p *registry.Provider, m registry.Model) string {
+	prefix := p.Alias
+	if prefix == "" {
+		prefix = p.ID
+	}
+	return prefix + "/" + m.ID
+}
+
 // handleModels lists every model the usable providers advertise.
 //
 // Ids are prefixed with the provider alias ("ds/deepseek-chat") so a client can
 // send one straight back to /v1/chat/completions. The provider id works too;
-// Resolve accepts both.
+// Resolve accepts both. This handler also serves /api/v1/models verbatim.
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	reg := s.Registry()
 	data := make([]modelObject, 0, 16)
 	for _, p := range reg.Providers() {
-		prefix := p.Alias
-		if prefix == "" {
-			prefix = p.ID
-		}
 		for _, m := range p.Models {
 			data = append(data, modelObject{
-				ID:      prefix + "/" + m.ID,
+				ID:      modelRef(p, m),
 				Object:  "model",
 				Created: 0,
 				OwnedBy: p.ID,

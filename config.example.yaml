@@ -69,6 +69,13 @@ providers:
   #     - id: internal-llama-70b
   #       name: Internal Llama 70B
   #       context: 131072
+  #       # Optional. Only used by the Ollama-shaped discovery endpoints
+  #       # (/api/tags, /api/show) and /v1/props; the chat proxy forwards any
+  #       # capability the client asks for regardless. Known keys: tools, vision,
+  #       # thinking, embedding, insert.
+  #       capabilities:
+  #         tools: true
+  #         vision: false
 
   # Catalog overrides work the same way, e.g. pin OpenAI to a proxy:
   # - id: oa

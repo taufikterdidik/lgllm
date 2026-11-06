@@ -399,6 +399,10 @@ type Model struct {
 	ID      string
 	Name    string
 	Context int
+	// Capabilities are optional features the provider declares (tools, vision,
+	// thinking, ...). They are only used by the compatibility endpoints; the
+	// chat proxy forwards whatever the client asks for regardless.
+	Capabilities map[string]bool
 }
 
 // Registry is an immutable snapshot of usable providers.
@@ -441,7 +445,12 @@ func New(cfg *config.Config) (*Registry, error) {
 			Timeout:   pc.Timeout.Std(),
 		}
 		for _, m := range pc.Models {
-			p.Models = append(p.Models, Model{ID: m.ID, Name: m.Name, Context: m.Context})
+			p.Models = append(p.Models, Model{
+				ID:           m.ID,
+				Name:         m.Name,
+				Context:      m.Context,
+				Capabilities: copyBoolMap(m.Capabilities),
+			})
 		}
 
 		for _, cc := range cfg.Connections {
@@ -489,6 +498,17 @@ func copyMap(in map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func copyBoolMap(in map[string]bool) map[string]bool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(in))
 	for k, v := range in {
 		out[k] = v
 	}

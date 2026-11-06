@@ -218,6 +218,48 @@ Definisi selesai: `GET /v1/models` mengembalikan gabungan model + combo + alias
 dalam format OpenAI (`{"object":"list","data":[...]}`), dan routing `provider/model`
 bekerja untuk 3 provider berbeda.
 
+### 3a. Endpoint kompatibilitas discovery — ✅ SELESAI
+
+Client lokal sering menanyakan dulu "server ini punya model apa" dalam dialek
+masing-masing. Empat endpoint read-only ditambahkan, semuanya membaca registry
+yang sama sehingga nama dari daftar itu bisa langsung dipakai di
+`/v1/chat/completions`:
+
+| Endpoint | Dialek | Isi |
+|---|---|---|
+| `GET /api/v1/models` | 9Router/[OI] | handler yang sama dengan `/v1/models` (alias murni) |
+| `GET /api/tags` | Ollama `ListResponse` | `name`, `model`, `modified_at`, `size`, `digest`, `details`, `capabilities` |
+| `GET,POST /api/show` | Ollama `ShowResponse` | body `{"model":"..."}` atau `?model=` |
+| `GET /v1/props` | llama.cpp `/props` | `model_alias`, `n_ctx`, `modalities`, `build_info` |
+
+Keputusan yang diambil:
+
+- Nama model selalu ber-prefix provider (`ak/...`), karena itulah bentuk yang
+  diterima router; daftar dan request memakai id yang sama. Suffix Ollama
+  `:latest` ditoleransi saat lookup, karena klien Ollama sering menambahkannya.
+- `details.format` = `api`, bukan `gguf`: modelnya remote, tidak ada file bobot.
+  `parameter_size`/`quantization_level` dibiarkan kosong daripada ditebak dari
+  nama model. `details.parent_model` diisi id provider sebagai provenance.
+- `digest` = sha256 dari `provider/model`, bukan hash bobot (yang tidak bisa
+  dibaca). Klien memakai field ini sebagai kunci cache/dedupe, jadi nilai kosong
+  akan membuat semua model tampak sama; nilai ini stabil antar-restart dan
+  berubah hanya kalau target routing berubah.
+- `capabilities` = `completion` + apa pun yang dideklarasikan
+  `models[].capabilities` di config. Proxy tidak bisa mengintrospeksi model
+  remote, jadi menebak akan menyesatkan.
+- Error endpoint Ollama memakai bentuk datar `{"error":"..."}`, bukan envelope
+  [OI]; client Ollama akan gagal membaca yang kedua.
+- Registry kosong: `/api/tags` menjawab `{"models":[]}` dan `/api/show` menjawab
+  404 `model "x" not found`, persis Ollama yang tidak punya model itu.
+  `/v1/props` tetap 200 dengan deskripsi kosong: probe klien tidak boleh
+  menyimpulkan prosesnya mati hanya karena belum ada koneksi.
+- `/v1/props` melaporkan default, bukan state slot hidup: `n_predict` -1 (tanpa
+  batas dari server), `n_ctx` dari config (0 = tidak diketahui, provider yang
+  menentukan), `is_sleeping` selalu false karena tidak ada KV cache lokal.
+- Semua handler read-only dan tidak pernah menghubungi provider, jadi tidak ada
+  biaya token atau risiko membocorkan credential.
+- Tidak ada translasi generasi (`/api/chat`, `/completion`): itu bagian fase 4.
+
 ---
 
 ## 4. Translasi format — bagian tersulit (minggu 2)

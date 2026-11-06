@@ -9,8 +9,8 @@ import (
 // routes declares every endpoint.
 //
 // Go 1.22 method patterns are used throughout, so a wrong method yields 405
-// automatically. The bare "/v1/" registration is the catch-all that gives an
-// unknown API path a JSON error instead of an HTML 404.
+// automatically. The "/v1/" and "/api/" registrations are catch-alls that give
+// an unknown API path a JSON error instead of an HTML 404.
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -19,7 +19,19 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 
-	s.mux.HandleFunc("/v1/", s.handleUnknownV1)
+	// Compatibility endpoints: the same data in the dialect another server
+	// would speak, so a client that probes these can discover what to route.
+	// /api/v1/models is a pure alias — the same handler serves both paths, so
+	// the two payloads cannot drift apart.
+	s.mux.HandleFunc("GET /api/v1/models", s.handleModels)
+	s.mux.HandleFunc("GET /api/tags", s.handleAPITags) // Ollama model list
+	s.mux.HandleFunc("GET /api/show", s.handleAPIShow) // Ollama model details
+	s.mux.HandleFunc("POST /api/show", s.handleAPIShow)
+	s.mux.HandleFunc("GET /v1/props", s.handleProps) // llama.cpp server properties
+	s.mux.HandleFunc("GET /props", s.handleProps)    // llama.cpp native path
+
+	s.mux.HandleFunc("/v1/", s.handleUnknownEndpoint)
+	s.mux.HandleFunc("/api/", s.handleUnknownEndpoint)
 
 	s.mux.HandleFunc("/", s.handleRoot)
 }
@@ -75,14 +87,20 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"GET /readyz",
 			"GET /version",
 			"GET /v1/models",
+			"GET /api/v1/models",
+			"GET /api/tags",
+			"GET,POST /api/show",
+			"GET /v1/props",
+			"GET /props",
 			"POST /v1/chat/completions",
 		},
 	})
 }
 
-// handleUnknownV1 keeps the /v1 namespace honest: an unimplemented endpoint gets
-// a JSON 404 that names it, not an HTML page from the mux.
-func (s *Server) handleUnknownV1(w http.ResponseWriter, r *http.Request) {
+// handleUnknownEndpoint keeps the /v1 and /api namespaces honest: an
+// unimplemented endpoint gets a JSON 404 that names it, not an HTML page from
+// the mux (and not the misleading "not found" of the root fallback).
+func (s *Server) handleUnknownEndpoint(w http.ResponseWriter, r *http.Request) {
 	writeJSONError(w, http.StatusNotFound,
 		"unknown endpoint "+r.Method+" "+r.URL.Path, "not_found")
 }
