@@ -78,7 +78,52 @@ func (s *Server) handleAPITags(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+
+	// Aliases and combos are routable names, so they belong in a list a client
+	// picks from. They have no upstream model of their own, so the target's
+	// capabilities are reported and size stays zero.
+	for _, a := range reg.Aliases() {
+		models = append(models, ollamaModel{
+			Name:         a.Name,
+			Model:        a.Name,
+			ModifiedAt:   modified,
+			Digest:       digestFor(a.Name),
+			Details:      ollamaDetailsFor(a.Target.Provider),
+			Capabilities: capabilitiesFor(advertisedOrEmpty(a.Target)),
+		})
+	}
+	for _, c := range reg.Combos() {
+		models = append(models, ollamaModel{
+			Name:         c.Name,
+			Model:        c.Name,
+			ModifiedAt:   modified,
+			Digest:       digestFor(c.Name),
+			Details:      ollamaDetailsFor(c.Members[0].Provider),
+			Capabilities: capabilitiesFor(advertisedOrEmpty(c.Members[0])),
+		})
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"models": models})
+}
+
+// digestFor fingerprints a routable name that has no single upstream model.
+func digestFor(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return hex.EncodeToString(sum[:])
+}
+
+// advertisedOrEmpty returns the advertised model behind a resolved target, so a
+// client sees the capabilities declared for it. A target naming a model the
+// provider does not advertise yields an empty model: capabilities are then just
+// "completion", which is true of anything this proxy routes.
+func advertisedOrEmpty(t registry.Target) registry.Model {
+	if t.Provider == nil {
+		return registry.Model{}
+	}
+	if m, ok := advertisedModel(t.Provider, t.Model); ok {
+		return m
+	}
+	return registry.Model{}
 }
 
 // modelDigest is a stable fingerprint of the routing target.
@@ -282,6 +327,15 @@ func findModel(reg *registry.Registry, requested string) (*registry.Provider, re
 				return p, m, true
 			}
 		}
+	}
+
+	// A configured alias or combo is a known name even when the model behind it
+	// is not in the advertised list.
+	if t, ok := reg.Shortcut(name); ok && t.Provider != nil {
+		if m, found := advertisedModel(t.Provider, t.Model); found {
+			return t.Provider, m, true
+		}
+		return t.Provider, registry.Model{ID: t.Model}, true
 	}
 
 	var (

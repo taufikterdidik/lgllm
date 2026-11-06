@@ -172,13 +172,14 @@ Temuan lain saat stabilisasi test fase 2:
 
 ---
 
-## 3. Registry provider & routing model (hari 4–6) — ✅ SELESAI (sebagian besar di fase 2)
+## 3. Registry provider & routing model (hari 4–6) — ✅ SELESAI
 
-> Status jujur: registry deklaratif, materialisasi katalog, validasi lintas-referensi,
-> dan resolusi `provider/model` sudah jalan di `internal/registry/registry.go`, dan
-> ikut terpakai oleh fase 2. Yang belum: alias model (mis. `fast` → id konkret),
-> inferensi prefix (`gpt-*` → openai), `combos[]`, dan penyimpanan SQLite/CRUD.
-> Poin-poin itu pindah ke fase 5/9 dan tidak menghambat proxy.
+> Status: registry deklaratif, materialisasi katalog, validasi lintas-referensi,
+> dan resolusi `provider/model` sudah jalan sejak fase 2. Fase 3 melengkapinya
+> dengan alias model (`fast` → `ds/deepseek-chat`), inferensi prefix (`gpt-*` →
+> openai, `claude-*` → anthropic), `combos[]`, dan pencantuman keduanya di
+> `/v1/models`. Yang belum: rotasi multi-akun, retry/fallback antar-member combo,
+> dan penyimpanan SQLite/CRUD — itu fase 5/9.
 
 
 Model deklaratif, bukan kode per provider:
@@ -260,6 +261,45 @@ Keputusan yang diambil:
   biaya token atau risiko membocorkan credential.
 - Tidak ada translasi generasi (`/api/chat`, `/completion`): itu bagian fase 4.
 
+### 3b. Alias, combo, dan inferensi prefix — ✅ SELESAI
+
+Tiga cara memberi nama pada target routing, semuanya dideklarasikan di
+`config.yaml` dan dicantumkan di `/v1/models`, `/api/tags`, dan `/api/show`:
+
+```yaml
+aliases:
+  fast: ds/deepseek-chat
+combos:
+  - name: coding
+    strategy: priority
+    members: [cc/, oa/gpt-4.1]
+```
+
+- Bentuk target yang diterima: `provider/model`, `provider/` (model pertama yang
+  diiklankan), atau alias lain. Model telanjang **ditolak** saat validasi: ia
+  akan diam-diam bergantung pada `default_provider`, dan kesalahan seperti itu
+  baru terasa ketika default berubah.
+- Alias dan combo disimpan apa adanya lalu diresolusi per request, sehingga
+  "provider belum punya credential" tetap bisa dibedakan dari "model tidak
+  dikenal". Combo melewati member yang providernya tidak punya credential.
+- Urutan lookup: `provider/model` → alias → combo → inferensi prefix → default.
+  Nama yang mengandung `/` tidak pernah lewat inferensi, karena bentuk itu juga
+  dipakai id gaya OpenRouter (`deepseek-ai/DeepSeek-V3`).
+- Inferensi sengaja dibatasi ke prefix yang tidak ambigu: `gpt-*`/`o1-*`/`o3-*`/
+  `o4-*` → openai, `claude-*` → anthropic, `gemini-*` → gemini, `deepseek-*` →
+  deepseek. Prefix yang dipakai beberapa provider (llama, qwen, mistral) tidak
+  ditebak, karena menebak akan mengirim model lokal ke cloud.
+- Nama alias/combo tidak boleh bertabrakan dengan id provider, alias provider,
+  atau satu sama lain. Config memeriksa yang dideklarasikan; `registry.Validate`
+  mengulangnya untuk alias katalog yang tidak disebut config (`cc`), sekaligus
+  mendeteksi siklus dan target yang tidak dikenal.
+- Dua strategi berjalan: `priority` memakai member pertama yang usable,
+  `round-robin` merotasi titik mulai per request (kursor hidup di snapshot, jadi
+  reload mengulang dari member nol). Combo fase 3 hanya **memilih** member;
+  retry ke member berikutnya setelah upstream menolak baru ada di fase 5.
+- Anggota combo boleh menunjuk alias, tetapi tidak boleh menunjuk combo lain
+  (nesting ditolak) supaya urutan percobaan tetap datar dan mudah dibaca di log.
+
 ---
 
 ## 4. Translasi format — bagian tersulit (minggu 2)
@@ -321,6 +361,11 @@ provider yang formatnya berbeda, streaming dan tool calling utuh.
 ---
 
 ## 5. Router: combo, fallback, multi-akun (minggu 3)
+
+> Status: kerangka `Combo` sudah ada sejak fase 3 — `strategy: priority` memilih
+> member pertama yang providernya punya credential. Yang dikerjakan di fase ini:
+> retry ke member berikutnya setelah percobaan gagal, klasifikasi error/cooldown,
+> rotasi multi-akun, dan peek event pertama untuk stream.
 
 ```go
 type Combo struct {

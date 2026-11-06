@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"lgllm/internal/config"
@@ -70,8 +71,10 @@ var catalog = []Builtin{
 		BaseURL: "https://api.anthropic.com/v1",
 		Format:  FormatAnthropic, Auth: "x-api-key",
 		Headers: map[string]string{"anthropic-version": "2023-06-01"},
-		// Model hints are added in phase 4: this provider is not reachable via
-		// the phase-2 passthrough, so advertising models here would mislead.
+		Models: []string{
+			"claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5",
+			"claude-3-7-sonnet-latest", "claude-3-5-haiku-latest",
+		},
 		KeyEnv: "ANTHROPIC_API_KEY", Site: "https://docs.anthropic.com",
 	},
 	{
@@ -280,6 +283,14 @@ func Validate(cfg *config.Config) error {
 	}
 
 	known := make(map[string]bool, len(effective))
+	for _, b := range catalog {
+		// Catalog names are reserved even when no connection uses them yet, so
+		// an alias must not shadow "cc" or "oa".
+		known[b.ID] = true
+		if b.Alias != "" {
+			known[b.Alias] = true
+		}
+	}
 	for i := range effective {
 		p := &effective[i]
 		known[p.ID] = true
@@ -337,6 +348,8 @@ func Validate(cfg *config.Config) error {
 		add("default_provider %q does not match any provider", cfg.DefaultProvider)
 	}
 
+	validateShortcuts(cfg, known, add)
+
 	switch len(problems) {
 	case 0:
 		return nil
@@ -354,6 +367,137 @@ func findProvider(list []config.Provider, ref string) *config.Provider {
 		}
 	}
 	return nil
+}
+
+// validateShortcuts checks that every alias and combo target exists.
+//
+// A shortcut that names a provider nobody configured is not an error here:
+// whether a credential is present is reported by the connection checks, and a
+// shortcut may legitimately sit ready for a provider that is added later. A
+// typo in the provider name, or an alias that points at itself, is an error
+// because no credential can ever fix it.
+func validateShortcuts(cfg *config.Config, known map[string]bool, add func(string, ...any)) {
+	effective := Materialize(cfg.Providers, cfg.Connections)
+
+	names := make([]string, 0, len(cfg.Aliases))
+	for name := range cfg.Aliases {
+		names = append(names, name)
+	}
+	sort.Strings(names) // stable error order: map iteration is randomized
+
+	comboNames := make(map[string]bool, len(cfg.Combos))
+	for _, cb := range cfg.Combos {
+		comboNames[cb.Name] = true
+	}
+	aliasNames := make(map[string]bool, len(cfg.Aliases))
+	for name := range cfg.Aliases {
+		aliasNames[name] = true
+	}
+
+	for _, name := range names {
+		where := fmt.Sprintf("aliases[%q]", name)
+		// config validation already rejects a collision with a declared provider
+		// id or alias; this one also covers catalog aliases the config never
+		// mentions ("cc"), which only this package knows about.
+		if known[name] {
+			add("%s: the name collides with a provider id or alias", where)
+		}
+		if comboNames[name] {
+			add("%s: the name collides with a combo", where)
+		}
+		if target := strings.TrimSpace(cfg.Aliases[name]); target == "" ||
+			strings.Contains(name, "/") {
+			continue // reported by config validation already
+		}
+		if _, _, err := resolveConfigRef(effective, cfg.Aliases, name, map[string]bool{}); err != nil {
+			add("%s: %v", where, err)
+		}
+	}
+
+	for i := range cfg.Combos {
+		cb := &cfg.Combos[i]
+		where := fmt.Sprintf("combos[%d] (%q)", i, cb.Name)
+		if known[cb.Name] {
+			add("%s: the name collides with a provider id or alias", where)
+		}
+		if aliasNames[cb.Name] {
+			add("%s: the name collides with an alias", where)
+		}
+		for j, member := range cb.Members {
+			member = strings.TrimSpace(member)
+			if member == "" {
+				continue // reported by config validation already
+			}
+			if _, isCombo := comboByName(cfg, member); isCombo {
+				add("%s: members[%d] %q names a combo; nesting is not supported", where, j, member)
+				continue
+			}
+			if _, _, err := resolveConfigRef(effective, cfg.Aliases, member, map[string]bool{}); err != nil {
+				add("%s: members[%d]: %v", where, j, err)
+			}
+		}
+	}
+}
+
+func comboByName(cfg *config.Config, name string) (config.Combo, bool) {
+	for _, cb := range cfg.Combos {
+		if cb.Name == name {
+			return cb, true
+		}
+	}
+	return config.Combo{}, false
+}
+
+// resolveConfigRef resolves a routing target against the materialized provider
+// set, without requiring a usable credential.
+//
+// Accepted: "provider/model", "provider/" (the provider's first advertised
+// model) and an alias name, recursively. A bare model name is refused: it would
+// depend on default_provider, which a configured target must never do silently.
+func resolveConfigRef(providers []config.Provider, aliases map[string]string, ref string, seen map[string]bool) (provider, model string, err error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", "", errors.New("target is empty")
+	}
+
+	if prefix, rest, ok := strings.Cut(ref, "/"); ok {
+		if p := findProvider(providers, prefix); p != nil {
+			if rest != "" {
+				return p.ID, rest, nil
+			}
+			if len(p.Models) == 0 {
+				return "", "", fmt.Errorf("provider %q advertises no model to default to", p.ID)
+			}
+			return p.ID, p.Models[0].ID, nil
+		}
+		// A catalog provider is a valid reference even before its connection is
+		// written: the shortcut then sits ready instead of failing the boot.
+		b, found := CatalogByRef(prefix)
+		if !found {
+			return "", "", fmt.Errorf("unknown provider %q", prefix)
+		}
+		if rest != "" {
+			return b.ID, rest, nil
+		}
+		if len(b.Models) == 0 {
+			return "", "", fmt.Errorf("provider %q advertises no model to default to", b.ID)
+		}
+		return b.ID, b.Models[0], nil
+	}
+
+	target, ok := aliases[ref]
+	if !ok {
+		return "", "", fmt.Errorf("%q is not \"provider/model\" and is not an alias", ref)
+	}
+	if seen[ref] {
+		return "", "", fmt.Errorf("alias cycle at %q", ref)
+	}
+	seen[ref] = true
+	provider, model, err = resolveConfigRef(providers, aliases, target, seen)
+	if err != nil {
+		return "", "", fmt.Errorf("alias %q: %w", ref, err)
+	}
+	return provider, model, nil
 }
 
 func validateEndpoint(raw string) error {
@@ -411,6 +555,30 @@ type Registry struct {
 	byAlias   map[string]string
 	order     []string
 	fallback  string
+
+	// aliases and combos are the config's routing shortcuts, kept unresolved:
+	// a target is only meaningful at request time, when the set of usable
+	// providers is already fixed in this snapshot.
+	aliases map[string]string
+	combos  map[string]*Combo
+}
+
+// Combo strategies.
+const (
+	// StrategyPriority tries members in declaration order.
+	StrategyPriority = "priority"
+	// StrategyRoundRobin rotates the starting member per request.
+	StrategyRoundRobin = "round-robin"
+)
+
+// Combo is a named group of routing targets tried in order.
+type Combo struct {
+	Name     string
+	Members  []string
+	Strategy string
+	// next is the round-robin cursor. Atomic because one snapshot serves
+	// concurrent requests; a reload starts again at member zero.
+	next atomic.Uint64
 }
 
 // New validates the config and compiles it into a registry snapshot.
@@ -486,7 +654,29 @@ func New(cfg *config.Config) (*Registry, error) {
 		r.fallback = r.order[0]
 	}
 
+	r.compileShortcuts(cfg)
 	return r, nil
+}
+
+// compileShortcuts copies the routing shortcuts into the snapshot.
+//
+// They are stored as declared and resolved per request: a provider without a
+// credential today may get one on the next reload, and resolving lazily lets a
+// request distinguish "unknown model" from "provider has no connection".
+func (r *Registry) compileShortcuts(cfg *config.Config) {
+	r.aliases = make(map[string]string, len(cfg.Aliases))
+	for name, target := range cfg.Aliases {
+		r.aliases[name] = target
+	}
+
+	r.combos = make(map[string]*Combo, len(cfg.Combos))
+	for _, cb := range cfg.Combos {
+		r.combos[cb.Name] = &Combo{
+			Name:     cb.Name,
+			Members:  append([]string(nil), cb.Members...),
+			Strategy: cb.Strategy,
+		}
+	}
 }
 
 func refersTo(ref string, p config.Provider) bool {
@@ -555,30 +745,269 @@ func (r *Registry) Default() (*Provider, bool) {
 // Len reports how many providers are usable.
 func (r *Registry) Len() int { return len(r.order) }
 
+// Target is a routing decision: which provider answers, with which model id.
+type Target struct {
+	Provider *Provider
+	Model    string
+	// Alias names the alias that produced this target, if any.
+	Alias string
+	// Combo names the combo that produced this target, if any.
+	Combo string
+}
+
 // Resolve maps a client model string to a provider and upstream model id.
-//
-// Accepted forms:
-//   - "provider/model" or "alias/model"
-//   - "model" (resolved against the default provider)
 func (r *Registry) Resolve(requested string) (*Provider, string, error) {
+	t, err := r.Lookup(requested)
+	if err != nil {
+		return nil, "", err
+	}
+	return t.Provider, t.Model, nil
+}
+
+// Lookup resolves a client model string, reporting which alias or combo matched
+// so a caller can log or echo the client-facing name.
+//
+// Accepted forms, most specific first:
+//   - "provider/model" or "alias/model"
+//   - a combo name from config.combos
+//   - an alias name from config.aliases
+//   - "provider/" for that provider's first advertised model
+//   - a bare model whose prefix identifies a provider ("gpt-*" -> openai)
+//   - a bare model routed to default_provider
+func (r *Registry) Lookup(requested string) (Target, error) {
 	requested = strings.TrimSpace(requested)
 	if requested == "" {
-		return nil, "", errors.New("model is required")
+		return Target{}, errors.New("model is required")
 	}
+	return r.lookupModel(requested, make(map[string]bool, 2))
+}
 
-	if prefix, rest, found := strings.Cut(requested, "/"); found && rest != "" {
+func (r *Registry) lookupModel(requested string, seen map[string]bool) (Target, error) {
+	if prefix, rest, found := strings.Cut(requested, "/"); found {
 		if p, ok := r.Provider(prefix); ok {
-			return p, rest, nil
+			return modelTarget(p, rest, prefix)
 		}
-		// No provider matched, so the slash belongs to the model id:
-		// openrouter-style ids look exactly like "vendor/model".
+		// The prefix is not a provider, so the slash belongs to the model id:
+		// openrouter-style ids look exactly like "vendor/model". Only the
+		// default provider can take it; prefix inference must not guess here,
+		// or "deepseek-ai/DeepSeek-V3" behind an OpenRouter default would be
+		// sent to DeepSeek with its vendor prefix doubled.
+		return r.defaultTarget(requested)
 	}
 
+	if target, ok := r.aliases[requested]; ok {
+		t, err := r.resolveTarget(target, seen)
+		if err != nil {
+			return Target{}, fmt.Errorf("alias %q -> %q: %w", requested, target, err)
+		}
+		t.Alias = requested
+		return t, nil
+	}
+
+	if cb, ok := r.combos[requested]; ok {
+		return r.pickCombo(cb)
+	}
+
+	if p, ok := r.inferProvider(requested); ok {
+		return Target{Provider: p, Model: requested}, nil
+	}
+
+	return r.defaultTarget(requested)
+}
+
+// defaultTarget routes a bare model name to default_provider.
+func (r *Registry) defaultTarget(model string) (Target, error) {
 	p, ok := r.Default()
 	if !ok {
-		return nil, "", fmt.Errorf("%w (use provider/model, e.g. %s)", ErrNoDefaultProvider, r.exampleRef())
+		return Target{}, fmt.Errorf("%w (use provider/model, e.g. %s)", ErrNoDefaultProvider, r.exampleRef())
 	}
-	return p, requested, nil
+	return Target{Provider: p, Model: model}, nil
+}
+
+// pickCombo chooses the member that serves this request.
+//
+// Only members whose provider has a usable credential are candidates, so a
+// combo keeps working when one provider is unconfigured. Phase 3 selects a
+// single target up front; phase 5 turns a failed attempt into a retry against
+// the next member.
+func (r *Registry) pickCombo(cb *Combo) (Target, error) {
+	usable := make([]Target, 0, len(cb.Members))
+	var lastErr error
+	for _, member := range cb.Members {
+		t, err := r.resolveTarget(member, make(map[string]bool, 2))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		usable = append(usable, t)
+	}
+	if len(usable) == 0 {
+		if lastErr == nil {
+			lastErr = errors.New("it lists no members")
+		}
+		return Target{}, fmt.Errorf("combo %q has no usable member: %v", cb.Name, lastErr)
+	}
+
+	idx := uint64(0)
+	if cb.Strategy == StrategyRoundRobin {
+		// Add(1)-1 makes the first request after a reload use member zero.
+		idx = cb.next.Add(1) - 1
+	}
+	t := usable[idx%uint64(len(usable))]
+	t.Combo = cb.Name
+	return t, nil
+}
+
+// resolveTarget resolves a configured target: it must reach a usable provider,
+// directly or through another alias. Unlike lookupModel it never falls back to
+// prefix inference or default_provider, because a configured target that cannot
+// be honoured should fail loudly rather than silently pick another provider.
+func (r *Registry) resolveTarget(ref string, seen map[string]bool) (Target, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return Target{}, errors.New("target is empty")
+	}
+
+	if prefix, rest, found := strings.Cut(ref, "/"); found {
+		p, ok := r.Provider(prefix)
+		if !ok {
+			return Target{}, fmt.Errorf("provider %q has no enabled connection", prefix)
+		}
+		return modelTarget(p, rest, prefix)
+	}
+
+	if target, ok := r.aliases[ref]; ok {
+		if seen[ref] {
+			return Target{}, fmt.Errorf("alias cycle at %q", ref)
+		}
+		seen[ref] = true
+		t, err := r.resolveTarget(target, seen)
+		if err != nil {
+			return Target{}, fmt.Errorf("alias %q: %w", ref, err)
+		}
+		return t, nil
+	}
+
+	return Target{}, fmt.Errorf("%q is not provider/model and is not a known alias", ref)
+}
+
+// modelTarget pairs a provider with a model id. An empty id means "the first
+// model this provider advertises", which is how "anthropic/" names a target.
+func modelTarget(p *Provider, model, prefix string) (Target, error) {
+	if model == "" {
+		id, ok := firstModel(p)
+		if !ok {
+			return Target{}, fmt.Errorf("provider %q advertises no models; use %s/<model>", p.ID, prefix)
+		}
+		model = id
+	}
+	return Target{Provider: p, Model: model}, nil
+}
+
+// inferenceRules map a bare model name to the provider that serves it.
+//
+// The prefixes identify the vendor unambiguously ("gpt-4o" is only served by
+// [OI]), so a client that speaks a vendor dialect works without a config
+// alias. A rule only applies when that provider is usable: with no [OI]
+// credential "gpt-4o" falls through to default_provider exactly as before.
+//
+// Deliberately absent: llama/qwen/mistral prefixes and anything else several
+// providers serve under the same name. Guessing there would send a local Ollama
+// model to a cloud provider and fail in a confusing way. A name containing "/"
+// is never inferred either: that shape is an OpenRouter-style model id.
+var inferenceRules = []struct {
+	provider string
+	prefixes []string
+}{
+	{provider: "openai", prefixes: []string{
+		"gpt-", "chatgpt-", "o1-", "o3-", "o4-", "text-embedding-",
+	}},
+	{provider: "anthropic", prefixes: []string{"claude-"}},
+	{provider: "gemini", prefixes: []string{"gemini-"}},
+	{provider: "deepseek", prefixes: []string{"deepseek-"}},
+}
+
+func (r *Registry) inferProvider(model string) (*Provider, bool) {
+	for _, rule := range inferenceRules {
+		for _, prefix := range rule.prefixes {
+			if strings.HasPrefix(model, prefix) {
+				return r.Provider(rule.provider)
+			}
+		}
+	}
+	return nil, false
+}
+
+// firstModel returns the first advertised model id of a provider.
+func firstModel(p *Provider) (string, bool) {
+	for _, m := range p.Models {
+		if m.ID != "" {
+			return m.ID, true
+		}
+	}
+	return "", false
+}
+
+// AliasInfo is a configured alias with its resolved target.
+type AliasInfo struct {
+	Name   string
+	Target Target
+}
+
+// Aliases reports the aliases that resolve with the current credentials, in
+// name order. An alias pointing at a provider with no connection is left out:
+// advertising it would offer a model the proxy cannot serve.
+func (r *Registry) Aliases() []AliasInfo {
+	out := make([]AliasInfo, 0, len(r.aliases))
+	for name := range r.aliases {
+		t, err := r.Lookup(name)
+		if err != nil {
+			continue
+		}
+		out = append(out, AliasInfo{Name: name, Target: t})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// ComboInfo is a configured combo with its usable members.
+type ComboInfo struct {
+	Name     string
+	Strategy string
+	Members  []Target
+}
+
+// Combos reports the combos with at least one usable member, in name order.
+func (r *Registry) Combos() []ComboInfo {
+	out := make([]ComboInfo, 0, len(r.combos))
+	for _, c := range r.combos {
+		info := ComboInfo{Name: c.Name, Strategy: c.Strategy}
+		for _, member := range c.Members {
+			t, err := r.resolveTarget(member, make(map[string]bool, 2))
+			if err != nil {
+				continue
+			}
+			info.Members = append(info.Members, t)
+		}
+		if len(info.Members) > 0 {
+			out = append(out, info)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// Shortcut resolves a name only if it is a configured alias or combo, never
+// falling back to inference or the default provider. "usable" is false for a
+// shortcut that exists but currently has no provider to route to.
+func (r *Registry) Shortcut(name string) (t Target, usable bool) {
+	_, isAlias := r.aliases[name]
+	_, isCombo := r.combos[name]
+	if !isAlias && !isCombo {
+		return Target{}, false
+	}
+	t, err := r.Lookup(name)
+	return t, err == nil
 }
 
 func (r *Registry) exampleRef() string {

@@ -107,6 +107,29 @@ connections:
 # to the only usable provider; set it explicitly once several are configured.
 # default_provider: deepseek
 
+# Shortcut names a client can send as "model". The names share a namespace with
+# provider ids, so they may not collide with one.
+#
+# Aliases map one short name to one routing target. A target is "provider/model"
+# (provider id or alias), "provider/" for that provider's first advertised model,
+# or another alias. A bare model name is refused: it would silently depend on
+# default_provider.
+aliases:
+  fast: ds/deepseek-chat
+  smart: oa/gpt-4.1
+
+# Combos group several targets under one name. `priority` picks the first member
+# whose provider has a usable credential; `round-robin` rotates the starting
+# member per request. Retrying a rejected attempt against the next member and
+# cooling down a failing account arrive in phase 5.
+combos:
+  - name: coding
+    strategy: priority
+    members:
+      - cc/claude-sonnet-4
+      - oa/gpt-4.1
+      - ds/deepseek-chat
+
 tokensaver:
   # Reserved for phase 6; parsed and validated now so the schema is stable.
   enabled: true

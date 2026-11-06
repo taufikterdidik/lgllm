@@ -83,7 +83,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, model, err := reg.Resolve(requested)
+	target, err := reg.Lookup(requested)
 	if err != nil {
 		status := http.StatusNotFound
 		if errors.Is(err, registry.ErrNoDefaultProvider) {
@@ -93,6 +93,14 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, status, err.Error(), "invalid_request_error")
 		return
 	}
+	provider, model := target.Provider, target.Model
+	log.Debug("routed request",
+		"requested", requested,
+		"provider", provider.ID,
+		"model", model,
+		"alias", target.Alias,
+		"combo", target.Combo,
+	)
 	if !provider.SupportsPassthrough() {
 		writeJSONError(w, http.StatusNotImplemented,
 			fmt.Sprintf("provider %q speaks the %q format, which needs the format translator (phase 4); use a chat-completions provider for now",
@@ -319,6 +327,27 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+
+	// Aliases and combos are routable names too, so a client that only reads
+	// this list can still use them. They are appended after the concrete models
+	// because owned_by has no single answer for a combo.
+	for _, a := range reg.Aliases() {
+		data = append(data, modelObject{
+			ID:      a.Name,
+			Object:  "model",
+			Created: 0,
+			OwnedBy: a.Target.Provider.ID,
+		})
+	}
+	for _, c := range reg.Combos() {
+		data = append(data, modelObject{
+			ID:      c.Name,
+			Object:  "model",
+			Created: 0,
+			OwnedBy: "combo",
+		})
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"object": "list",
 		"data":   data,

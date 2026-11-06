@@ -31,9 +31,20 @@ type Config struct {
 	// one enabled connection references it.
 	Connections []Connection `yaml:"connections"`
 
-	// DefaultProvider is used for bare model names that do not match a built-in
-	// prefix rule, e.g. "my-finetune". Defaults to the only configured provider.
+	// DefaultProvider is used for bare model names that cannot be inferred from
+	// a prefix, e.g. "my-finetune". Defaults to the only configured provider.
 	DefaultProvider string `yaml:"default_provider"`
+
+	// Aliases map a client-facing name to a routing target, e.g.
+	// "fast: ds/deepseek-chat". A target is "provider/model" (provider id or
+	// alias) or another alias; a bare model name is refused because it would
+	// silently depend on default_provider.
+	Aliases map[string]string `yaml:"aliases"`
+
+	// Combos are named groups of routing targets tried in order. Phase 3 uses
+	// the first member that can serve; retry, rotation and cooldown on a failed
+	// attempt arrive in phase 5.
+	Combos []Combo `yaml:"combos"`
 
 	// Source is the absolute path this config was loaded from.
 	Source string `yaml:"-"`
@@ -91,6 +102,18 @@ type Model struct {
 	Name         string          `yaml:"name"`
 	Context      int             `yaml:"context"`
 	Capabilities map[string]bool `yaml:"capabilities"`
+}
+
+// Combo is a named routing group.
+//
+// Members are routing targets in priority order: "provider/model", a bare model
+// name resolved like any request, or another alias. Phase 3 picks the first
+// member that can serve the request (its provider has a usable credential);
+// phase 5 adds retry/rotation when an attempt fails.
+type Combo struct {
+	Name     string   `yaml:"name"`
+	Members  []string `yaml:"members"`
+	Strategy string   `yaml:"strategy"`
 }
 
 // Connection is one credential for a provider.

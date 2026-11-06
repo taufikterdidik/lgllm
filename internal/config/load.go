@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -195,6 +196,27 @@ func (c *Config) normalize() {
 		cn.Provider = strings.TrimSpace(cn.Provider)
 		cn.BaseURL = strings.TrimRight(strings.TrimSpace(cn.BaseURL), "/")
 	}
+
+	// --- aliases and combos ---
+	if len(c.Aliases) > 0 {
+		normalized := make(map[string]string, len(c.Aliases))
+		for name, target := range c.Aliases {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			normalized[name] = strings.TrimSpace(target)
+		}
+		c.Aliases = normalized
+	}
+	for i := range c.Combos {
+		cb := &c.Combos[i]
+		cb.Name = strings.TrimSpace(cb.Name)
+		cb.Strategy = strings.ToLower(strings.TrimSpace(cb.Strategy))
+		for j := range cb.Members {
+			cb.Members[j] = strings.TrimSpace(cb.Members[j])
+		}
+	}
 }
 
 // providers returns the normalized provider list with config-level checks.
@@ -284,6 +306,75 @@ func (c *Config) validateProviders(add func(string, ...any)) {
 			if err := validateURL(cn.BaseURL); err != nil {
 				add("%s.base_url: %v", where, err)
 			}
+		}
+	}
+
+	// --- aliases and combos ---
+	//
+	// Only shape is checked here. Whether a target names a real provider needs
+	// the built-in catalog, so it lives in registry.Validate. Names are checked
+	// for uniqueness within config, because a duplicate would make a request's
+	// meaning depend on the section's order.
+	comboNames := make(map[string]bool, len(c.Combos))
+	for i := range c.Combos {
+		cb := &c.Combos[i]
+		where := fmt.Sprintf("combos[%d]", i)
+		if cb.Name == "" {
+			add("%s.name is required", where)
+			continue
+		}
+		if strings.Contains(cb.Name, "/") {
+			add("%s.name must not contain \"/\" (that is the provider prefix)", where)
+		}
+		if comboNames[cb.Name] {
+			add("%s.name %q is duplicated", where, cb.Name)
+		}
+		comboNames[cb.Name] = true
+		if ids[cb.Name] {
+			add("%s.name %q collides with a provider id", where, cb.Name)
+		}
+		if _, ok := aliases[cb.Name]; ok {
+			add("%s.name %q collides with a provider alias", where, cb.Name)
+		}
+
+		switch cb.Strategy {
+		case "", "priority", "round-robin":
+		default:
+			add("%s.strategy %q is not one of priority|round-robin", where, cb.Strategy)
+		}
+
+		if len(cb.Members) == 0 {
+			add("%s.members must list at least one target", where)
+		}
+		for j, m := range cb.Members {
+			if m == "" {
+				add("%s.members[%d] is empty", where, j)
+			}
+		}
+	}
+
+	aliasNames := make([]string, 0, len(c.Aliases))
+	for name := range c.Aliases {
+		aliasNames = append(aliasNames, name)
+	}
+	sort.Strings(aliasNames) // stable error order: map iteration is randomized
+
+	for _, name := range aliasNames {
+		where := fmt.Sprintf("aliases[%q]", name)
+		if strings.Contains(name, "/") {
+			add("%s.name must not contain \"/\" (that is the provider prefix)", where)
+		}
+		if comboNames[name] {
+			add("%s.name %q is already used by a combo", where, name)
+		}
+		if ids[name] {
+			add("%s.name %q collides with a provider id", where, name)
+		}
+		if _, ok := aliases[name]; ok {
+			add("%s.name %q collides with a provider alias", where, name)
+		}
+		if strings.TrimSpace(c.Aliases[name]) == "" {
+			add("%s.target is required", where)
 		}
 	}
 }
