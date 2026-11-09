@@ -6,10 +6,13 @@
 /config.yaml
 /config.local.yaml
 *.local.yaml
+# admin API overlay (mode 0600, may contain encrypted/plain keys)
+/admin.yaml
 
-# editor / OS
+# editor / OS / local tool state
 .idea/
 .vscode/
+.brv/
 *.swp
 .DS_Store
 

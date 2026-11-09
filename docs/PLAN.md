@@ -928,6 +928,20 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 
 ---
 
+## 12. Dashboard performa per model (rencana)
+
+Rencana lengkap ada di [`PLAN-PERFORMANCE.md`](PLAN-PERFORMANCE.md).
+
+Ringkasnya: setiap model upstream yang tersedia menampilkan rata-rata **TTFT**,
+**latency**, dan **TPS** dari **10 attempt terakhir** (stream dan non-stream
+dipisah). Sampel diambil dari instrumentasi `tryConnection` + pembacaan SSE usage;
+disimpan di ring buffer in-memory `internal/perf`; diekspos lewat
+`GET /api/performance` dan tab **Performance** di UI. Kegagalan masuk success
+rate tetapi tidak menggeser rata-rata performa. Estimasi ±1,5–2 hari, tanpa
+dependensi baru.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -943,6 +957,7 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 | 9 | Admin API | 2 hari | ✅ CRUD + usage/logs + test-connection |
 | 10 | UI (web/TUI) | 4–6 hari | ✅ web minimal embedded (tanpa Node) |
 | 11 | Release & benchmark | 2 hari | ✅ image 8.7 MB + BENCH.md |
+| 12 | Dashboard TPS/TTFT/latency per model | 1,5–2 hari | rencana |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.
