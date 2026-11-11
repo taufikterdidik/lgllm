@@ -33,6 +33,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/keys", s.handleAdminKeys)
 	s.mux.HandleFunc("DELETE /api/keys/{id}", s.handleAdminKey)
 	s.mux.HandleFunc("GET /api/usage", s.handleAdminUsage)
+	s.mux.HandleFunc("GET /api/performance", s.handleAdminPerformance)
 	s.mux.HandleFunc("GET /api/logs", s.handleAdminLogs)
 	s.mux.HandleFunc("GET /api/logs/stream", s.handleAdminLogsStream)
 	s.mux.HandleFunc("POST /api/test-connection", s.handleAdminTestConnection)
@@ -119,6 +120,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"GET /version",
 			"GET /metrics",
 			"GET /usage",
+			"GET /api/performance (admin)",
 			"GET /ui/ (admin)",
 			"GET /v1/models",
 			"GET /api/v1/models",

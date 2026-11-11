@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"lgllm/internal/perf"
 	"lgllm/internal/registry"
 	"lgllm/internal/tokensaver"
 	"lgllm/internal/translate"
@@ -228,6 +229,7 @@ func (s *Server) tryConnection(
 		}
 		status := upstream.TransportErrorStatus(err)
 		s.Metrics.ObserveFailure(provider.ID, status)
+		s.recordFailedAttempt(provider.ID, model, req.stream, time.Since(start))
 		cooldown := s.Balancer.Fail(conn.ID, 30*time.Second, 10*time.Minute)
 		log.Warn("upstream request failed",
 			"provider", provider.ID, "model", model, "status", status,
@@ -236,6 +238,15 @@ func (s *Server) tryConnection(
 			Provider: provider.ID, Model: model, Connection: conn.ID,
 			Status: status, Error: err.Error(),
 		}
+	}
+	// Tap a stream before it is peeked or relayed. The tap only observes the
+	// bytes being read; it never rewrites them, so passthrough stays
+	// byte-identical. Deferring after the assignment closes the tap, which is
+	// what flushes a final event without a trailing blank line.
+	var tap *perf.SSETap
+	if req.stream {
+		tap = perf.NewSSETap(resp.Body, provider.Format)
+		resp.Body = tap
 	}
 	defer resp.Body.Close()
 
@@ -250,6 +261,7 @@ func (s *Server) tryConnection(
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		s.Metrics.ObserveFailure(provider.ID, resp.StatusCode)
+		s.recordFailedAttempt(provider.ID, model, req.stream, time.Since(start))
 		class := classifyStatus(resp.StatusCode, resp.Header)
 		cooldown := s.Balancer.Fail(conn.ID, class.base, class.max)
 		log.Warn("upstream returned an error",
@@ -273,6 +285,7 @@ func (s *Server) tryConnection(
 		}
 		if err != nil {
 			s.Metrics.ObserveFailure(provider.ID, http.StatusBadGateway)
+			s.recordFailedAttempt(provider.ID, model, true, time.Since(start))
 			cooldown := s.Balancer.Fail(conn.ID, 30*time.Second, 10*time.Minute)
 			log.Warn("upstream stream started with an error or no data",
 				"provider", provider.ID, "model", model, "conn", conn.ID,
@@ -290,6 +303,7 @@ func (s *Server) tryConnection(
 		if !needsTranslation {
 			n, relayErr := s.relayVerbatim(w, resp)
 			logRelay(log, provider, model, start, n, relayErr, req.stats)
+			s.recordStreamResult(provider.ID, model, start, tap, relayErr)
 			return true, nil
 		}
 		stages := make([]translate.Converter, 0, 2)
@@ -307,12 +321,14 @@ func (s *Server) tryConnection(
 		}
 		n, relayErr := s.pipeConverted(w, r, resp, stages...)
 		logRelay(log, provider, model, start, n, relayErr, req.stats)
+		s.recordStreamResult(provider.ID, model, start, tap, relayErr)
 		return true, nil
 	}
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxTranslatedBodyBytes))
 	if err != nil {
 		s.Metrics.ObserveFailure(provider.ID, http.StatusBadGateway)
+		s.recordFailedAttempt(provider.ID, model, false, time.Since(start))
 		cooldown := s.Balancer.Fail(conn.ID, 15*time.Second, 5*time.Minute)
 		log.Warn("reading upstream response failed",
 			"provider", provider.ID, "model", model, "conn", conn.ID,
@@ -324,6 +340,7 @@ func (s *Server) tryConnection(
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		s.Metrics.ObserveFailure(provider.ID, http.StatusBadGateway)
+		s.recordFailedAttempt(provider.ID, model, false, time.Since(start))
 		cooldown := s.Balancer.Fail(conn.ID, 15*time.Second, 5*time.Minute)
 		log.Warn("upstream returned an empty response",
 			"provider", provider.ID, "model", model, "conn", conn.ID,
@@ -342,6 +359,7 @@ func (s *Server) tryConnection(
 		pivot, err := translate.DecodeResponse(provider.Format, raw)
 		if err != nil {
 			s.Metrics.ObserveFailure(provider.ID, http.StatusBadGateway)
+			s.recordFailedAttempt(provider.ID, model, false, time.Since(start))
 			cooldown := s.Balancer.Fail(conn.ID, 15*time.Second, 5*time.Minute)
 			log.Warn("decoding upstream response failed",
 				"provider", provider.ID, "model", model, "conn", conn.ID,
@@ -357,6 +375,7 @@ func (s *Server) tryConnection(
 			out, err = translate.EncodeOpenAI(pivot)
 		}
 		if err != nil {
+			s.recordFailedAttempt(provider.ID, model, false, time.Since(start))
 			return false, &attemptFailure{
 				Provider: provider.ID, Model: model, Connection: conn.ID,
 				Status: http.StatusBadGateway, Error: "encoding response: " + err.Error(),
@@ -373,6 +392,7 @@ func (s *Server) tryConnection(
 	}
 
 	s.Balancer.Succeed(conn.ID)
+	s.recordNonStreamAttempt(provider.ID, model, time.Since(start), usage)
 	s.recordRequest(req, provider.ID, model, http.StatusOK,
 		usage.PromptTokens, usage.CompletionTokens, "")
 	w.Header().Set("Content-Type", "application/json")

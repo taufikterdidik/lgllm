@@ -4,6 +4,7 @@ const state = {
   token: localStorage.getItem('lgllm.admin.token') || '',
   tab: 'providers',
   logsAbort: null,
+  perfTimer: null,
   usageGroup: 'provider',
 };
 
@@ -100,6 +101,7 @@ async function render() {
     b.classList.toggle('active', b.dataset.tab === state.tab);
   }
   if (state.logsAbort) { state.logsAbort.abort(); state.logsAbort = null; }
+  if (state.perfTimer) { clearInterval(state.perfTimer); state.perfTimer = null; }
   view.replaceChildren(el('p', { class: 'muted', text: 'Loading…' }));
   try {
     switch (state.tab) {
@@ -108,6 +110,7 @@ async function render() {
       case 'combos': return await renderCombos();
       case 'keys': return await renderKeys();
       case 'usage': return await renderUsage();
+      case 'performance': return await renderPerformance();
       case 'logs': return await renderLogs();
       case 'settings': return await renderSettings();
     }
@@ -281,6 +284,84 @@ async function renderUsage() {
     el('div', { class: 'toolbar' }, [el('span', { class: 'muted', text: 'group by' }), selector,
       el('span', { class: 'muted', text: 'Ring buffer only; lost on restart.' })]),
     table(['key', 'requests', 'failures', 'prompt', 'completion', 'saved bytes', 'cost'], rows),
+  );
+}
+
+function fmtMs(value) {
+  if (value === null || value === undefined) return 'n/a';
+  if (value >= 1000) return (value / 1000).toFixed(2) + ' s';
+  return (value < 10 ? value.toFixed(1) : Math.round(value)) + ' ms';
+}
+
+function fmtTps(mode) {
+  if (!mode || mode.avg_tps === null || mode.avg_tps === undefined) return 'n/a';
+  return mode.avg_tps.toFixed(1) + (mode.tps_estimated ? ' est.' : '');
+}
+
+// renderPerformance shows the last N attempts per advertised model. Stream and
+// non-stream samples are averaged separately; the row prefers the stream values
+// and labels a non-stream TPS as estimated (it is tokens/latency, not TPS).
+async function renderPerformance() {
+  const host = el('div');
+  const meta = el('span', { class: 'muted' });
+
+  async function load() {
+    try {
+      const payload = await api('/api/performance');
+      const rows = payload.data.map((m) => {
+        // Prefer a mode with a usable TPS; otherwise fall back to whichever
+        // mode has samples so TTFT/latency still render.
+        const hasTps = (s) => s.avg_tps !== null && s.avg_tps !== undefined;
+        const mode = hasTps(m.stream) ? m.stream
+          : hasTps(m.non_stream) ? m.non_stream
+          : m.stream.samples > 0 ? m.stream : m.non_stream;
+        const modes = [];
+        if (m.stream.samples > 0) modes.push('stream ' + m.stream.samples);
+        if (m.non_stream.samples > 0) modes.push('non-stream ' + m.non_stream.samples);
+        return {
+          tps: mode.avg_tps === null || mode.avg_tps === undefined ? -1 : mode.avg_tps,
+          cells: [
+            m.provider + '/' + m.model,
+            String(m.attempts),
+            String(m.successes),
+            fmtMs(mode.avg_ttft_ms),
+            fmtMs(mode.avg_latency_ms),
+            fmtTps(mode),
+            modes.length ? modes.join(' · ') : '—',
+            m.last_seen ? new Date(m.last_seen).toLocaleTimeString() : '—',
+          ],
+        };
+      });
+      rows.sort((a, b) => b.tps - a.tps ||
+        (a.cells[0] < b.cells[0] ? -1 : a.cells[0] > b.cells[0] ? 1 : 0));
+      host.replaceChildren(table(
+        ['model', 'requests', 'ok', 'TTFT', 'latency', 'TPS', 'mode', 'last seen'],
+        rows.map((r) => r.cells),
+      ));
+      if (payload.data.every((m) => m.attempts === 0)) {
+        host.appendChild(el('p', { class: 'muted', text: 'No samples yet — send a request to a model.' }));
+      }
+      meta.textContent = 'window: last ' + payload.window + ' attempts · updated ' +
+        new Date().toLocaleTimeString();
+    } catch (err) {
+      host.replaceChildren(el('p', { class: 'error', text: err.message }));
+      setStatus(err.message, 'error');
+    }
+  }
+
+  await load();
+  state.perfTimer = setInterval(() => {
+    if (document.hidden || state.tab !== 'performance') return;
+    load();
+  }, 5000);
+
+  view.replaceChildren(
+    el('h2', { text: 'Performance' }),
+    el('div', { class: 'toolbar' }, [
+      meta,
+      el('span', { class: 'muted', text: 'last N attempts per model; est. = tokens/latency; refresh 5 s' }),
+    ]),
+    host,
   );
 }
 

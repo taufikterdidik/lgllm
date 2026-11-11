@@ -521,6 +521,9 @@ func (c *Config) Validate() error {
 	if c.Metrics.UsageLogSize < 0 {
 		add("metrics.usage_log_size must not be negative")
 	}
+	if c.Metrics.PerformanceWindow < 1 {
+		add("metrics.performance_window must be positive")
+	}
 	if c.Metrics.PprofListen != "" {
 		h, p, err := net.SplitHostPort(c.Metrics.PprofListen)
 		switch {

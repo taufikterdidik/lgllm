@@ -143,6 +143,10 @@ type Metrics struct {
 	// UsageLogSize is the number of recent requests kept in memory. Zero
 	// disables the ring buffer while leaving counters active.
 	UsageLogSize int `yaml:"usage_log_size"`
+	// PerformanceWindow is the number of recent attempts kept per model for
+	// the admin performance view (TTFT, latency, TPS). It is in-memory and
+	// needs a restart to resize, like UsageLogSize.
+	PerformanceWindow int `yaml:"performance_window"`
 }
 
 // Connection is one credential for a provider.
@@ -243,8 +247,9 @@ func Default() Config {
 			MaxIdleConnsPerHost:   64,
 		},
 		Metrics: Metrics{
-			Enabled:      true,
-			UsageLogSize: 500,
+			Enabled:           true,
+			UsageLogSize:      500,
+			PerformanceWindow: 10,
 		},
 		Admin: Admin{Enabled: false},
 		TokenSaver: TokenSaver{

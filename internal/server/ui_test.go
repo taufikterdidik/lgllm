@@ -33,6 +33,12 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 	if !strings.Contains(js.Body.String(), "/api/providers") {
 		t.Error("app.js does not call the admin API")
 	}
+	if !strings.Contains(js.Body.String(), "/api/performance") {
+		t.Error("app.js does not call the performance endpoint")
+	}
+	if !strings.Contains(page.Body.String(), `data-tab="performance"`) {
+		t.Error("index does not have a performance tab")
+	}
 
 	// /ui redirects to /ui/.
 	redirect := do(s, httptest.NewRequest(http.MethodGet, "/ui", nil))

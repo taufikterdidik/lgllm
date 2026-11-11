@@ -16,6 +16,7 @@ import (
 	"lgllm/internal/balancer"
 	"lgllm/internal/config"
 	"lgllm/internal/metrics"
+	"lgllm/internal/perf"
 	"lgllm/internal/ratelimit"
 	"lgllm/internal/registry"
 	"lgllm/internal/upstream"
@@ -43,6 +44,8 @@ type Server struct {
 	Metrics *metrics.Metrics
 	// Usage keeps the recent-request ring buffer (nil when disabled).
 	Usage *usagelog.Store
+	// Perf keeps recent TTFT/latency/TPS samples per provider/model.
+	Perf *perf.Registry
 	// RateLimit enforces auth.rate_limit per client key.
 	RateLimit *ratelimit.Limiter
 	// Admin owns the overlay for API-managed resources (nil disables the API).
@@ -66,6 +69,7 @@ type Options struct {
 	Balancer  *balancer.Balancer
 	Metrics   *metrics.Metrics
 	Usage     *usagelog.Store
+	Perf      *perf.Registry
 	RateLimit *ratelimit.Limiter
 	Admin     *admin.Manager
 }
@@ -104,7 +108,11 @@ func New(opts Options) *Server {
 	if opts.Metrics == nil {
 		opts.Metrics = metrics.New()
 	}
-	// A nil Usage store is valid and means "disabled".
+	// A nil Usage store is valid and means "disabled". The performance window
+	// is always on: it is tiny and only populated by real attempts.
+	if opts.Perf == nil {
+		opts.Perf = perf.New(opts.Config().Metrics.PerformanceWindow)
+	}
 	if opts.RateLimit == nil {
 		cfgFn := opts.Config // keep the closure stable across reloads
 		opts.RateLimit = ratelimit.New(func() ratelimit.Config {
@@ -125,6 +133,7 @@ func New(opts Options) *Server {
 		Balancer:  opts.Balancer,
 		Metrics:   opts.Metrics,
 		Usage:     opts.Usage,
+		Perf:      opts.Perf,
 		RateLimit: opts.RateLimit,
 		Admin:     opts.Admin,
 		mux:       http.NewServeMux(),

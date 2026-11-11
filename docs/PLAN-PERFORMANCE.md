@@ -1,6 +1,7 @@
 # Rencana: dashboard performa per model upstream
 
-Status: **rencana** (belum diimplementasikan)
+Status: **✅ diimplementasikan** (lihat `docs/PLAN.md` bagian 12a/12b untuk
+keputusan akhir dan fitur yang ditunda)
 
 ## Tujuan
 

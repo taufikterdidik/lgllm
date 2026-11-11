@@ -22,6 +22,7 @@ import (
 	"lgllm/internal/auth"
 	"lgllm/internal/config"
 	"lgllm/internal/metrics"
+	"lgllm/internal/perf"
 	"lgllm/internal/registry"
 	"lgllm/internal/secret"
 	"lgllm/internal/server"
@@ -140,6 +141,9 @@ func run() error {
 		if c.Metrics.UsageLogSize != initial.Metrics.UsageLogSize {
 			logger.Warn("metrics.usage_log_size changed, but a restart is required to resize the ring buffer")
 		}
+		if c.Metrics.PerformanceWindow != initial.Metrics.PerformanceWindow {
+			logger.Warn("metrics.performance_window changed, but a restart is required to resize the performance window")
+		}
 		if c.Metrics.PprofListen != initial.Metrics.PprofListen {
 			logger.Warn("metrics.pprof_listen changed, but a restart is required to move the pprof listener")
 		}
@@ -174,6 +178,7 @@ func run() error {
 		Upstream: upstreamClient,
 		Metrics:  metrics.New(),
 		Usage:    usagelog.New(initial.Metrics.UsageLogSize),
+		Perf:     perf.New(initial.Metrics.PerformanceWindow),
 		Admin:    adminManager,
 	})
 

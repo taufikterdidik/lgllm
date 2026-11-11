@@ -25,7 +25,8 @@ import (
 func isAdminPath(p string) bool {
 	switch p {
 	case "/api/providers", "/api/connections", "/api/combos", "/api/keys",
-		"/api/usage", "/api/logs", "/api/logs/stream", "/api/test-connection":
+		"/api/usage", "/api/performance", "/api/logs", "/api/logs/stream",
+		"/api/test-connection":
 		return true
 	}
 	return strings.HasPrefix(p, "/api/providers/") ||

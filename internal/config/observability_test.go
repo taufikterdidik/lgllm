@@ -17,6 +17,11 @@ func TestValidateMetrics(t *testing.T) {
 			want: "usage_log_size",
 		},
 		{
+			name: "zero performance window",
+			yaml: "metrics:\n  performance_window: 0\n",
+			want: "performance_window",
+		},
+		{
 			name: "pprof must be host:port",
 			yaml: "metrics:\n  pprof_listen: nope\n",
 			want: "host:port",
@@ -57,6 +62,9 @@ func TestMetricsDefaults(t *testing.T) {
 	}
 	if cfg.Metrics.UsageLogSize != 500 {
 		t.Errorf("usage_log_size = %d", cfg.Metrics.UsageLogSize)
+	}
+	if cfg.Metrics.PerformanceWindow != 10 {
+		t.Errorf("performance_window = %d, want 10", cfg.Metrics.PerformanceWindow)
 	}
 	if cfg.Metrics.PprofListen != "" {
 		t.Errorf("pprof_listen = %q, want empty", cfg.Metrics.PprofListen)

@@ -66,6 +66,9 @@ metrics:
   # Recent requests kept in memory for /usage. 0 disables the ring buffer while
   # leaving counters active. Resizing needs a restart.
   usage_log_size: 500
+  # Attempts kept per model for the Performance tab / /api/performance (TTFT,
+  # latency, TPS). In-memory; resizing needs a restart. Must be positive.
+  performance_window: 10
 
 upstream:
   # TCP connect + TLS handshake.

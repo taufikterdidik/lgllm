@@ -4,13 +4,14 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–11 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–12 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
-per-key rate limits, an admin REST API with an embedded web UI, and packaging
-benchmarks. 9Router parity is not the goal; see [`docs/PLAN.md`](docs/PLAN.md) for
-the phase-by-phase scope and what each phase deliberately leaves out.
+per-key rate limits, an admin REST API with an embedded web UI, packaging
+benchmarks, and a per-model TTFT/latency/TPS dashboard. 9Router parity is not the
+goal; see [`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each
+phase deliberately leaves out.
 
 ## Why
 
@@ -149,6 +150,7 @@ keys. Without a token it is loopback-only and a public bind is refused.
 | `/api/combos` | `GET`, `POST`; `PUT/DELETE /api/combos/{name}` |
 | `/api/keys` | `GET`, `POST`; `DELETE /api/keys/{id}` |
 | `/api/usage?from=&to=&group=provider\|model\|day` | `GET` |
+| `/api/performance?provider=` | `GET` (recent TTFT/latency/TPS per model) |
 | `/api/logs?limit=N` | `GET` |
 | `/api/logs/stream` | `GET` (SSE, live entries) |
 | `/api/test-connection` | `POST {"provider":"...","model":"...","connection":"..."}` |
@@ -167,8 +169,9 @@ endpoints are empty and the live stream is unavailable.
 
 With `admin.enabled: true`, open `http://127.0.0.1:20128/ui/` and paste the admin
 token. The page is plain HTML/CSS/JS embedded in the binary (no Node, no asset
-directory) and has tabs for providers, connections, combos, keys, usage, live
-logs, and settings. It calls the admin API with `X-Admin-Token`; the token is kept
+directory) and has tabs for providers, connections, combos, keys, usage,
+performance, live logs, and settings. It calls the admin API with `X-Admin-Token`;
+the token is kept
 in `localStorage` for that browser only. Static assets carry a strict
 `Content-Security-Policy` and are served without an inference key, while every
 API call still needs the admin token. When the admin API is off, `/ui/` answers
@@ -180,6 +183,7 @@ API call still needs the admin token. When the admin API is off, `/ui/` answers
 |---|---|
 | `GET /metrics` | Prometheus text: requests by ingress/provider/model/status, duration histogram, tokens, token-saver bytes, failed attempts |
 | `GET /usage?limit=N` | recent requests (newest first): request id, provider/model, status, duration, tokens, saved bytes, estimated cost, error |
+| `GET /api/performance` | last N attempts per advertised model: TTFT, latency, TPS, success rate, split by stream/non-stream |
 | `metrics.pprof_listen` | optional separate loopback listener exposing `/debug/pprof/` |
 
 `/metrics` and `/usage` sit behind the same auth as the API (only health checks
@@ -260,6 +264,7 @@ internal/translate/   pivot IR and OpenAI/Anthropic/Gemini/Responses translators
 internal/balancer/    credential rotation, sticky sessions, cooldown/backoff
 internal/tokensaver/  tool-result compression (diff, grep, JSON, logs)
 internal/metrics/     Prometheus text exposition
+internal/perf/        per-model attempt window + read-only SSE usage tap
 internal/usagelog/    in-memory ring of recent requests
 internal/pricing/     manual per-model cost table
 internal/secret/      AES-GCM encryption for credentials at rest
@@ -279,8 +284,9 @@ applied at the server. Upstream timeouts are per phase: connect, response header
 then an idle watchdog (`upstream.*` in the config). A client that stops reading is
 also cut off, so it cannot pin a goroutine and an upstream connection forever.
 
-**Streaming is byte-for-byte.** The relay flushes on every chunk and never parses
-the payload. The SSE response headers are flushed as soon as the upstream answers,
+**Streaming is byte-for-byte.** The relay flushes on every chunk and never rewrites
+the payload; a read-only tap observes usage and first-token timing without
+buffering it. The SSE response headers are flushed as soon as the upstream answers,
 so a client can distinguish "stream open, no token yet" from a stalled connect.
 Buffering proxies (nginx, Cloudflare) are told to back off with
 `X-Accel-Buffering: no` and `Cache-Control: no-cache`.
@@ -343,6 +349,16 @@ resets at 00:00 UTC.
 library), the usage log is a bounded in-memory ring (500 entries by default), and
 pprof gets its own loopback listener rather than sharing the API port. Request
 bodies are logged only at debug level, truncated and with keys/tokens redacted.
+
+**Recent performance is measured, not inferred.** Each upstream attempt records
+TTFT (first content event), latency (last byte) and TPS in a small per-model ring
+(`metrics.performance_window`, default 10). Stream TPS uses the provider's usage
+between the first and last content event; a JSON response has no first-token
+signal, so its TPS is `tokens/latency` and the UI labels it `est.`. Failures
+count toward the success rate but not toward the averages, and a provider that
+reports no usage yields `n/a` rather than a guessed token count. The tap is
+read-only, so a passthrough stream stays byte-identical. The window is in-memory
+and resets on restart.
 
 **Auth defaults to `localhost`.** Loopback clients are trusted so a locally
 installed CLI works with no setup; anything else must present a key. `auth.mode:

@@ -928,17 +928,76 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 
 ---
 
-## 12. Dashboard performa per model (rencana)
+## 12. Dashboard performa per model — ✅ SELESAI
 
-Rencana lengkap ada di [`PLAN-PERFORMANCE.md`](PLAN-PERFORMANCE.md).
+> Status: setiap model yang diiklankan menampilkan rata-rata **TTFT**,
+> **latency**, dan **TPS** dari **10 attempt terakhir** (dapat diubah lewat
+> `metrics.performance_window`). Stream dan non-stream dipisah. Data muncul di
+> `GET /api/performance` dan tab **Performance** di UI, diperbarui tiap 5 detik.
+> Rencana awal dan definisi metrik ada di
+> [`PLAN-PERFORMANCE.md`](PLAN-PERFORMANCE.md).
 
-Ringkasnya: setiap model upstream yang tersedia menampilkan rata-rata **TTFT**,
-**latency**, dan **TPS** dari **10 attempt terakhir** (stream dan non-stream
-dipisah). Sampel diambil dari instrumentasi `tryConnection` + pembacaan SSE usage;
-disimpan di ring buffer in-memory `internal/perf`; diekspos lewat
-`GET /api/performance` dan tab **Performance** di UI. Kegagalan masuk success
-rate tetapi tidak menggeser rata-rata performa. Estimasi ±1,5–2 hari, tanpa
-dependensi baru.
+Ringkasnya: sampel diambil dari instrumentasi `tryConnection` + pembacaan SSE
+usage; disimpan di ring buffer in-memory `internal/perf`; kegagalan masuk success
+rate tetapi tidak menggeser rata-rata performa.
+
+### 12a. Keputusan implementasi — ✅ SELESAI
+
+- **`internal/perf`.** `Registry` menyimpan ring `Sample` per `provider/model`
+  (default 10). `Aggregate` memisahkan `stream` dan `non_stream`; `Snapshot`
+  diurutkan agar output stabil. Hanya angka dan waktu yang disimpan — tidak ada
+  prompt, respons, atau credential.
+- **`perf.SSETap`.** Membungkus body SSE dan membaca baris `data:` tanpa
+  mengubah satu byte; ada test yang membandingkan output tap dengan input
+  byte-per-byte. Tap mengenali konten pertama dan usage untuk OpenAI, Anthropic,
+  Gemini, dan Responses, termasuk event yang terpecah antar-`Read`.
+- **Titik ukur.** `tryConnection` membuat tap sebelum stream di-peek/direlay,
+  jadi event pertama yang sudah dibaca saat peek tetap terhitung. Sampel dicatat
+  setelah respons selesai (bukan saat header); stream yang putus di tengah
+  dicatat gagal dengan latency parsial. Transport error, non-2xx, body kosong,
+  dan kegagalan decode juga tercatat gagal.
+- **Definisi angka.** TTFT = waktu dari request dikirim ke konten pertama
+  (`content`, `reasoning_content`, tool call, atau delta ekuivalen). Latency =
+  sampai byte terakhir. TPS stream = `completion_tokens / (konten terakhir −
+  konten pertama)`; bila hanya ada satu event konten, dipakai latency dan
+  ditandai `est.`. Non-stream selalu `tokens/latency` dan ditandai `est.`.
+- **Usage provider.** TPS hanya dihitung bila provider mengirim usage. Request
+  yang ditranslasi ke OpenAI menambahkan `stream_options.include_usage`; pada
+  pass-through OpenAI, klien yang mengatur opsi itu. Tanpa usage, TPS `n/a`
+  (tidak dikarang dari jumlah chunk).
+- **API.** `GET /api/performance` memakai autentikasi admin yang sama, menerima
+  filter `?provider=` (id atau alias), dan mengembalikan **semua model yang
+  diiklankan** — termasuk yang belum pernah dipakai (`attempts: 0`, nilai
+  `null`). Sampel untuk model yang tidak lagi ada di registry tidak ditampilkan.
+- **UI.** Tab **Performance** menampilkan model, jumlah attempt/sukses, TTFT,
+  latency, TPS, mode (`stream n · non-stream n`), dan last seen. Urutan default
+  TPS menurun; auto-refresh 5 detik berhenti saat tab browser tidak aktif.
+- **Konfigurasi.** `metrics.performance_window` (default 10) divalidasi harus > 0.
+  Seperti usage log, mengubah ukurannya butuh restart dan `apply` mencatat
+  peringatan.
+- **Verifikasi.** Unit test ring buffer/agregasi/tap untuk empat format, test
+  server untuk API dan pencatatan attempt sukses/gagal (stream dan non-stream),
+  serta test UI statis. `make check` dan `go test -race ./...` bersih.
+
+### 12b. Belum masuk fase 12
+
+- **Persistensi.** Sampel hilang saat restart (in-memory, sama seperti usage log);
+  belum ada SQLite/riwayat jangka panjang.
+- **Gauge Prometheus.** `lgllm_model_ttft_seconds`, `lgllm_model_tps`, dan
+  `lgllm_model_requests_window` belum diekspos; angka hanya lewat API/UI.
+- **TPS non-stream yang eksak.** Belum ada sinyal first-token untuk respons JSON,
+  jadi TPS non-stream tetap estimasi `tokens/latency`.
+- **Token stream di `/usage` dan `/metrics`.** Tap sudah membaca usage, tetapi
+  pencatatan usage request stream masih 0; integrasi itu menyusul bersama
+  penyimpanan.
+- **Per-connection.** Agregat masih per `provider/model`, belum per credential;
+  satu akun lambat tidak bisa dibedakan dari akun lain di provider yang sama.
+- **Grafik dan ambang sampel.** Belum ada grafik time-series atau label
+  "low sample"; UI hanya menampilkan jumlah sampel.
+- **Alias dan combo.** Baris mengikuti model upstream yang diiklankan; alias dan
+  combo tidak mendapat baris agregat sendiri.
+- **Sampling overhead.** Tap membaca dan mem-parse setiap event SSE; belum diukur
+  dampaknya pada throughput stream yang sangat besar.
 
 ---
 
@@ -957,7 +1016,7 @@ dependensi baru.
 | 9 | Admin API | 2 hari | ✅ CRUD + usage/logs + test-connection |
 | 10 | UI (web/TUI) | 4–6 hari | ✅ web minimal embedded (tanpa Node) |
 | 11 | Release & benchmark | 2 hari | ✅ image 8.7 MB + BENCH.md |
-| 12 | Dashboard TPS/TTFT/latency per model | 1,5–2 hari | rencana |
+| 12 | Dashboard TPS/TTFT/latency per model | 1,5–2 hari | ✅ /api/performance + tab Performance |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.
