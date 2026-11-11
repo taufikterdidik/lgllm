@@ -72,6 +72,52 @@ Reload the config without restarting with `SIGHUP` (or by editing the file, when
 polling is on). A failed reload keeps the previous config serving. Changing
 `server.listen` requires a restart; everything else applies live.
 
+## Config CLI
+
+`lgllm config` edits the YAML file directly; it does not need a running server.
+The edits are applied to the YAML node tree, so comments and `${ENV}`
+placeholders survive, and the result is validated with the server's parser
+before the file is replaced atomically. Run it with no command on a terminal for
+an interactive menu.
+
+```bash
+lgllm config init                                  # starter config.yaml
+
+# A catalog provider needs no declaration: a connection is enough.
+lgllm config connection add --provider openai --id work --api-key '${OPENAI_API_KEY}'
+
+# Custom / self-hosted provider
+lgllm config provider add --id lab \
+  --base-url https://gateway.internal/v1 --format openai --auth bearer --model qwen3
+
+# Refresh the advertised model list from the provider's GET /models
+lgllm config models sync --provider lab --dry-run
+lgllm config models sync --provider lab --replace
+lgllm config connection test --provider lab
+
+lgllm config alias set fast ds/deepseek-chat
+lgllm config combo add cheap --member ds/deepseek-chat --member or/google/gemini-2.5-pro
+lgllm config show
+lgllm config validate
+```
+
+`models sync` merges by default, preserving the name, context and capabilities
+of models that are still advertised; `--replace` drops the ones the provider no
+longer lists. The runtime view used for discovery includes `admin.yaml` and
+decrypted `enc:v1:` secrets (`LGLLM_MASTER_KEY` or `--master-key`), but writes go
+to the main file only and are refused for resources managed through the admin
+API. The running server picks the change up on its next config poll, or send
+`SIGHUP`.
+
+| Command | Purpose |
+|---|---|
+| `provider list\|add\|set\|remove` | catalog and custom providers, including headers and models |
+| `connection list\|add\|set\|remove\|test` | credentials, base URL overrides, live `/models` probe |
+| `models list\|sync` | configured models; `--upstream` previews the provider list |
+| `alias list\|set\|remove` | client-facing model aliases |
+| `combo list\|add\|set\|remove` | fallback groups |
+| `show`, `validate`, `init`, `wizard` | inspect, check, bootstrap, interactive menu |
+
 ## Using the proxy
 
 Point any [OI]-compatible client at `http://127.0.0.1:20128/v1` and pick a model
@@ -257,6 +303,7 @@ connections:
 ```
 cmd/lgllm/            entrypoint: flags, logging, signal handling, wiring
 internal/config/      schema, defaults, validation, ${ENV} expansion, watcher
+internal/configcmd/   `lgllm config` editor (node-preserving YAML, model sync)
 internal/auth/        API key verifier (constant time, hash-only option)
 internal/registry/    provider catalog, config merge, validation, model routing
 internal/upstream/    outbound HTTP client, streaming relay, stall detection

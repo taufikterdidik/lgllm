@@ -999,6 +999,76 @@ rate tetapi tidak menggeser rata-rata performa.
 - **Sampling overhead.** Tap membaca dan mem-parse setiap event SSE; belum diukur
   dampaknya pada throughput stream yang sangat besar.
 
+### 13. Config CLI (`lgllm config`)
+
+Tujuan: mengatur `config.yaml` tanpa server berjalan dan tanpa editor teks,
+secara interaktif maupun non-interaktif.
+
+- **Model edit.** Perubahan dilakukan pada pohon node YAML (`yaml.Node`), bukan
+  marshal ulang struct. Komentar, urutan key, placeholder `${ENV}`, dan nilai
+  `enc:v1:` yang tidak disentuh tetap utuh.
+- **Aman.** Setiap perubahan divalidasi dengan parser yang sama (`config.Parse`
+  + `registry.New`) sebelum file diganti secara atomik (tulis temp, `fsync`,
+  `rename`, mode file dipertahankan). File tidak pernah ditulis jika hasilnya
+  invalid.
+- **Non-interaktif.** `init`, `show`, `validate`, `provider list|add|set|remove`,
+  `connection list|add|set|remove|test`, `models list|sync`,
+  `alias list|set|remove`, dan `combo list|add|set|remove`. Flag bisa sebelum
+  atau sesudah posisi id (`combo add cheap --member ...` tetap bekerja).
+- **Interaktif.** `lgllm config wizard` (atau `lgllm config` di terminal tanpa
+  argumen) menampilkan menu: tambah provider katalog/custom, tambah koneksi,
+  sync model, show, alias, remove, validate. Wizard memanggil jalur
+  non-interaktif yang sama, jadi validasi dan penulisan tetap satu implementasi.
+- **Provider.** `provider add openai` cukup menulis `id: openai`; field lain
+  mewarisi katalog. Provider custom wajib `--base-url`. `provider set`
+  mendukung `--base-url`, `--format`, `--auth`, `--auth-param`, `--header`,
+  `--timeout`, `--model`, dan enable/disable. `show` hanya menampilkan status
+  secret (placeholder/ciphertext/`set, N chars`), tidak pernah plaintext.
+- **Koneksi.** `connection add --provider oa` menerima alias katalog dan
+  menulis id kanonik. Tanpa `--api-key`, provider katalog memakai default
+  `${KEY_ENV}` (mis. `${OPENAI_API_KEY}`); provider `auth: none` tidak butuh key.
+  `connection test` memanggil `GET /models` dengan kredensial tersebut.
+- **Sync model.** `models sync` membaca `GET <base_url>/models` memakai
+  koneksi terpilih (`--connection`, default koneksi enabled pertama), mendukung
+  auth `bearer`, `x-api-key`, `query`, header provider (mis.
+  `anthropic-version`), timeout, dan bentuk respons OpenAI (`data`), Ollama
+  (`models`), maupun array. Default **merge**: metadata `name`, `context`,
+  `capabilities` model lama dipertahankan dan id baru ditambahkan. `--replace`
+  membuang id yang tidak lagi diiklankan. `--dry-run` mencetak hasil tanpa
+  menulis. URL di error di-redact (termasuk query auth).
+- **Runtime vs file.** Discovery memakai `config.LoadWithOverrides`, jadi
+  `admin.yaml` dan secret `enc:v1:` ikut terpakai (`LGLLM_MASTER_KEY` /
+  `--master-key`), tetapi penulisan hanya ke file utama. Perubahan yang akan
+  menduplikasi id milik `admin.yaml` ditolak dengan pesan agar memakai admin
+  API. Perubahan provider yang dikelola admin juga ditolak.
+- **Verifikasi.** Test untuk init/validate/show, siklus provider+koneksi,
+  aktivasi catalog lewat koneksi saja, placeholder `${ENV}` dan masking,
+  sync merge/replace/dry-run serta preservasi metadata, tiga skema auth,
+  kegagalan upstream yang tidak mengubah file, `connection test`, alias/combo,
+  wizard, dan perintah tidak dikenal. `go vet`, `go test ./...` bersih.
+
+### 13b. Belum masuk fase 13
+
+- **Section selain routing.** Belum ada perintah untuk `server`, `auth`,
+  `metrics`, `upstream`, `log`, atau `admin`; file masih harus diedit manual.
+  Wizard hanya menyentuh providers, connections, models, aliases, combos.
+- **TUI penuh.** Wizard berbasis baris, bukan layar TUI dengan navigasi panah.
+- **Output JSON.** Belum ada `--json` untuk scripting; saat ini output teks.
+- **Diff dan undo.** Hanya `models sync --dry-run` yang punya pratinjau; belum
+  ada diff untuk semua perintah, backup otomatis, atau undo.
+- **Metadata model dari upstream.** Sync hanya mengambil id; `context` dan
+  `capabilities` baru ditangani kalau sudah ada di config atau diisi manual.
+- **Key yang belum ter-resolve.** `models sync`/`connection test` gagal bila
+  `${VAR}` belum diexport di shell yang menjalankan CLI; belum ada prompt
+  interaktif untuk mengisi key sementara.
+- **Input secret.** Wizard belum menyembunyikan ketikan API key (tanpa
+  `golang.org/x/term`); secret juga bisa terlihat di shell history bila
+  `--api-key` diisi literal. Gunakan `${VAR}` atau `lgllm -encrypt`.
+- **Katalog remote.** Daftar provider bawaan masih hard-coded; belum ada
+  pembaruan katalog dari jaringan.
+- **Test koneksi saat sync.** `models sync` tidak otomatis menjalankan
+  `connection test`; keduanya perintah terpisah.
+
 ---
 
 ## Urutan eksekusi ringkas
@@ -1017,6 +1087,7 @@ rate tetapi tidak menggeser rata-rata performa.
 | 10 | UI (web/TUI) | 4–6 hari | ✅ web minimal embedded (tanpa Node) |
 | 11 | Release & benchmark | 2 hari | ✅ image 8.7 MB + BENCH.md |
 | 12 | Dashboard TPS/TTFT/latency per model | 1,5–2 hari | ✅ /api/performance + tab Performance |
+| 13 | Config CLI (provider, connection, sync model) | 2 hari | ✅ non-interaktif + wizard |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

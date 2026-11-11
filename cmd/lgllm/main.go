@@ -21,6 +21,7 @@ import (
 	"lgllm/internal/admin"
 	"lgllm/internal/auth"
 	"lgllm/internal/config"
+	"lgllm/internal/configcmd"
 	"lgllm/internal/metrics"
 	"lgllm/internal/perf"
 	"lgllm/internal/registry"
@@ -39,6 +40,12 @@ func main() {
 }
 
 func run() error {
+	// `lgllm config ...` edits the YAML file and never starts a server, so it is
+	// dispatched before the server flag set parses anything.
+	if len(os.Args) > 1 && (os.Args[1] == "config" || os.Args[1] == "cfg") {
+		return configcmd.Run(os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+	}
+
 	fs := flag.NewFlagSet("lgllm", flag.ExitOnError)
 	var (
 		cfgPath     = fs.String("config", "config.yaml", "path to the YAML config file")
