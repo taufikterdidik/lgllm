@@ -3,8 +3,11 @@ package server
 import (
 	"io"
 	"net/http"
+	"strings"
 
 	"lgllm/internal/registry"
+	"lgllm/internal/sessionid"
+	"lgllm/internal/version"
 )
 
 // maxErrorBodyBytes caps how much of an upstream error body is relayed. A
@@ -82,6 +85,31 @@ func applyProviderAuth(req *http.Request, p *registry.Provider, c registry.Conne
 		q.Set(p.AuthParam, c.APIKey)
 		req.URL.RawQuery = q.Encode()
 	}
+}
+
+// applySessionHeader puts the conversation id in the provider's configured
+// header. Providers without the capability are left untouched, so adding the
+// feature does not change their requests.
+func applySessionHeader(req *http.Request, p *registry.Provider, session string) {
+	if p.SessionHeader == "" {
+		return
+	}
+	if id := sessionid.Sanitize(session); id != "" {
+		req.Header.Set(p.SessionHeader, id)
+	}
+}
+
+// applyUserAgent forwards the caller's user agent when present and otherwise
+// identifies lgllm. Go's default "Go-http-client/1.1" is discouraged by coding
+// providers, including OpenCode Go.
+func applyUserAgent(req *http.Request, inbound *http.Request) {
+	if inbound != nil {
+		if ua := strings.TrimSpace(inbound.Header.Get("User-Agent")); ua != "" {
+			req.Header.Set("User-Agent", ua)
+			return
+		}
+	}
+	req.Header.Set("User-Agent", "lgllm/"+version.String())
 }
 
 // modelObject is one entry of the model list.

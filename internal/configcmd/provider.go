@@ -65,17 +65,18 @@ func providerList(args []string, g globals, stdout io.Writer) error {
 }
 
 type providerOptions struct {
-	alias        string
-	baseURL      string
-	format       string
-	auth         string
-	authParam    string
-	timeout      string
-	headers      []string
-	models       []string
-	disabled     bool
-	enabled      bool
-	clearHeaders bool
+	alias         string
+	baseURL       string
+	format        string
+	auth          string
+	authParam     string
+	sessionHeader string
+	timeout       string
+	headers       []string
+	models        []string
+	disabled      bool
+	enabled       bool
+	clearHeaders  bool
 }
 
 func providerAdd(args []string, g globals, stdout io.Writer) error {
@@ -87,6 +88,7 @@ func providerAdd(args []string, g globals, stdout io.Writer) error {
 		format    = fs.String("format", "", "openai|anthropic|gemini|openai-responses|ollama")
 		auth      = fs.String("auth", "", "bearer|x-api-key|query|none")
 		authParam = fs.String("auth-param", "", "query parameter for auth=query")
+		session   = fs.String("session-header", "", "outbound header for a stable per-conversation id")
 		timeout   = fs.String("timeout", "", "per-provider response header timeout, e.g. 60s")
 		models    csvList
 		headers   stringList
@@ -135,7 +137,8 @@ func providerAdd(args []string, g globals, stdout io.Writer) error {
 	mappingSet(entry, "id", scalar(canonical))
 	opts := providerOptions{
 		alias: *alias, baseURL: *baseURL, format: *format, auth: *auth,
-		authParam: *authParam, timeout: *timeout, headers: headers, models: models,
+		authParam: *authParam, sessionHeader: *session, timeout: *timeout,
+		headers: headers, models: models,
 	}
 	if err := applyProviderOptions(entry, opts, changedFlags(fs)); err != nil {
 		return err
@@ -168,6 +171,7 @@ func providerSet(args []string, g globals, stdout io.Writer) error {
 		format    = fs.String("format", "", "openai|anthropic|gemini|openai-responses|ollama")
 		auth      = fs.String("auth", "", "bearer|x-api-key|query|none")
 		authParam = fs.String("auth-param", "", "query parameter for auth=query")
+		session   = fs.String("session-header", "", "outbound header for a stable per-conversation id (empty removes it)")
 		timeout   = fs.String("timeout", "", "per-provider response header timeout (empty removes it)")
 		models    csvList
 		headers   stringList
@@ -218,7 +222,8 @@ func providerSet(args []string, g globals, stdout io.Writer) error {
 	}
 	opts := providerOptions{
 		alias: *alias, baseURL: *baseURL, format: *format, auth: *auth,
-		authParam: *authParam, timeout: *timeout, headers: headers, models: models,
+		authParam: *authParam, sessionHeader: *session, timeout: *timeout,
+		headers: headers, models: models,
 		disabled: *disabled, enabled: *enabled, clearHeaders: *clear,
 	}
 	if err := applyProviderOptions(entry, opts, changedFlags(fs)); err != nil {
@@ -330,6 +335,9 @@ func applyProviderOptions(entry *yaml.Node, o providerOptions, changed map[strin
 	}
 	if flagProvided(changed, "auth-param") {
 		setOrDeleteString(entry, "auth_param", o.authParam)
+	}
+	if flagProvided(changed, "session-header") {
+		setOrDeleteString(entry, "session_header", strings.TrimSpace(o.sessionHeader))
 	}
 	if flagProvided(changed, "timeout") {
 		setOrDeleteString(entry, "timeout", o.timeout)

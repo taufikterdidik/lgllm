@@ -90,6 +90,10 @@ type Provider struct {
 	AuthParam string `yaml:"auth_param"`
 	// Headers are sent on every request to this provider (e.g. anthropic-version).
 	Headers map[string]string `yaml:"headers"`
+	// SessionHeader names an outbound header that carries a stable
+	// per-conversation id, e.g. "x-opencode-session". It is filled at request
+	// time from the client's session header or a deterministic fingerprint.
+	SessionHeader string `yaml:"session_header"`
 	// Timeout overrides upstream.response_header_timeout for this provider.
 	Timeout Duration `yaml:"timeout"`
 	// Models is display-only: it feeds GET /v1/models. Any model id is accepted

@@ -15,6 +15,7 @@ import (
 	"lgllm/internal/admin"
 	"lgllm/internal/config"
 	"lgllm/internal/registry"
+	"lgllm/internal/sessionid"
 	"lgllm/internal/translate"
 )
 
@@ -95,16 +96,17 @@ type adminModel struct {
 }
 
 type adminProvider struct {
-	ID        string            `json:"id"`
-	Alias     string            `json:"alias,omitempty"`
-	BaseURL   string            `json:"base_url"`
-	Format    string            `json:"format"`
-	Auth      string            `json:"auth"`
-	AuthParam string            `json:"auth_param,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	TimeoutMS int64             `json:"timeout_ms,omitempty"`
-	Models    []adminModel      `json:"models,omitempty"`
-	Managed   string            `json:"managed"` // config|admin
+	ID            string            `json:"id"`
+	Alias         string            `json:"alias,omitempty"`
+	BaseURL       string            `json:"base_url"`
+	Format        string            `json:"format"`
+	Auth          string            `json:"auth"`
+	AuthParam     string            `json:"auth_param,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	SessionHeader string            `json:"session_header,omitempty"`
+	TimeoutMS     int64             `json:"timeout_ms,omitempty"`
+	Models        []adminModel      `json:"models,omitempty"`
+	Managed       string            `json:"managed"` // config|admin
 }
 
 type adminConnection struct {
@@ -132,8 +134,8 @@ type adminKey struct {
 func providerDTO(p config.Provider, managed string) adminProvider {
 	out := adminProvider{
 		ID: p.ID, Alias: p.Alias, BaseURL: p.BaseURL, Format: p.Format,
-		Auth: p.Auth, AuthParam: p.AuthParam, Managed: managed,
-		TimeoutMS: p.Timeout.Std().Milliseconds(),
+		Auth: p.Auth, AuthParam: p.AuthParam, SessionHeader: p.SessionHeader,
+		Managed: managed, TimeoutMS: p.Timeout.Std().Milliseconds(),
 	}
 	if len(p.Headers) > 0 {
 		out.Headers = make(map[string]string, len(p.Headers))
@@ -153,7 +155,8 @@ func providerFromDTO(d adminProvider) config.Provider {
 	p := config.Provider{
 		ID: d.ID, Alias: d.Alias, BaseURL: d.BaseURL, Format: d.Format,
 		Auth: d.Auth, AuthParam: d.AuthParam, Headers: d.Headers,
-		Timeout: config.Duration(time.Duration(d.TimeoutMS) * time.Millisecond),
+		SessionHeader: d.SessionHeader,
+		Timeout:       config.Duration(time.Duration(d.TimeoutMS) * time.Millisecond),
 	}
 	for _, m := range d.Models {
 		p.Models = append(p.Models, config.Model{
@@ -657,6 +660,7 @@ func (s *Server) handleAdminTestConnection(w http.ResponseWriter, r *http.Reques
 		Provider   string `json:"provider"`
 		Connection string `json:"connection"`
 		Model      string `json:"model"`
+		Session    string `json:"session"`
 	}
 	if err := decodeAdminBody(r, &body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
@@ -720,9 +724,15 @@ func (s *Server) handleAdminTestConnection(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	applyUserAgent(req, nil)
 	for k, v := range provider.Headers {
 		req.Header.Set(k, v)
 	}
+	session := body.Session
+	if session == "" {
+		session = sessionid.Fingerprint("admin-test:" + provider.ID + ":" + conn.ID + ":" + model)
+	}
+	applySessionHeader(req, provider, session)
 	if provider.Format == registry.FormatAnthropic && req.Header.Get("anthropic-version") == "" {
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}

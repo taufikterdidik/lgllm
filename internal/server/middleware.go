@@ -287,7 +287,10 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 			if r.Header.Get("Access-Control-Request-Method") != "" {
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers",
-					"Authorization, Content-Type, X-Api-Key, Anthropic-Version, Anthropic-Beta, X-Lgllm-Token-Saver")
+					"Authorization, Content-Type, X-Api-Key, Anthropic-Version, Anthropic-Beta, "+
+						"X-Lgllm-Token-Saver, X-Lgllm-Session, X-Session-Id, X-Session-Affinity, "+
+						"X-Opencode-Session, X-Opencode-Session-Id, Session-Id, Session_id, "+
+						"Conversation-Id, X-Conversation-Id, X-Claude-Code-Session-Id")
 				w.Header().Set("Access-Control-Max-Age", "600")
 			}
 			w.WriteHeader(http.StatusNoContent)

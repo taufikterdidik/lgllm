@@ -1071,6 +1071,78 @@ secara interaktif maupun non-interaktif.
 
 ---
 
+## 14. Builtin provider OpenCode Go + session header — ✅ SELESAI
+
+> Status: `opencode-go` (alias `ocg`) tersedia di katalog bawaan. Provider ini
+> memakai permukaan **OpenAI Chat Completions** di
+> `https://opencode.ai/inference/go/openai/v1`, auth bearer
+> `OPENCODE_GO_API_KEY`, dan **wajib** mengirim header
+> `x-opencode-session` berisi id percakapan yang stabil. Tanpa header itu
+> gateway menjawab `400 MissingSessionID`.
+
+Kemampuan ini bukan hard-code per provider: registry menyimpan field deklaratif
+`session_header`, jadi provider lain yang punya aturan serupa bisa memakainya
+lewat config tanpa mengubah kode proxy.
+
+### 14a. Keputusan implementasi — ✅ SELESAI
+
+- **Satu entri katalog.** Go menerjemahkan setiap model teks ke permukaan
+  OpenAI, jadi cukup satu entri `FormatChat`. Daftar model di katalog adalah
+  hint `GET /v1/models`, bukan allow-list; model baru tetap diteruskan.
+- **Model berbayar saja.** `beam-free`, `iceman-contributor-free`, dan
+  `longcat-2.5-free` tidak diiklankan karena dokumentasi menyebut model gratis
+  bisa `403` di luar klien OpenCode. Model berbayar tetap bisa dipakai lewat
+  id apa pun.
+- **Field `session_header`.** `config.Provider.SessionHeader`
+  (`yaml:"session_header"`) diteruskan ke `registry.Provider.SessionHeader`.
+  Nama header divalidasi sebagai HTTP token dan tidak boleh menimpa header yang
+  dikelola lgllm (`authorization`, `content-type`, `host`, dan sejenisnya).
+- **Sumber id.** Urutan prioritas: header eksplisit klien
+  (`X-Lgllm-Session`, `X-Opencode-Session`, `X-Opencode-Session-Id`,
+  `X-Session-Id`, `X-Session-Affinity`, `Session-Id`, `Conversation-Id`,
+  `X-Claude-Code-Session-Id`) → `prompt_cache_key` → fingerprint deterministik
+  dari pesan user pertama (atau `system`/`instructions`/`prompt`) →
+  `metadata.user_id`/`user` → fingerprint request id. Nilai disanitasi dan
+  dibatasi 256 byte.
+- **Stabil per percakapan.** `internal/sessionid.Fingerprint` menghasilkan
+  `ses_` + 12 hex + 14 alfanumerik dari SHA-256 seed. Turn kedua dari
+  percakapan yang sama mengirim id yang sama; percakapan lain mendapat id
+  berbeda. Seed memakai pesan user pertama karena system prompt sering berubah
+  (tanggal, working directory).
+- **Terpisah dari sticky balancer.** `generationRequest.conversation` menyimpan
+  id keluar, sedangkan `session` tetap dipakai balancer dan hanya diisi id
+  eksplisit. Combo round-robin tanpa header klien tetap berotasi; provider yang
+  butuh header tetap mendapat fingerprint.
+- **Header keluar.** `applySessionHeader` hanya menulis bila provider punya
+  `session_header`. User-Agent klien diteruskan; bila kosong dipakai
+  `lgllm/<versi>`, karena gateway menolak `Go-http-client/1.1`.
+- **Admin dan CLI.** DTO provider admin memuat `session_header`, dan
+  `/api/test-connection` mengirim id (dari body `session` atau fingerprint
+  probe). `config provider add|set --session-header` menulis field YAML;
+  `models sync` mengirim header yang sama saat discovery.
+- **CORS.** Header sesi masuk allow-list preflight agar klien browser bisa
+  mengirim id percakapan.
+- **Verifikasi.** Test fingerprint/sanitasi, prioritas header klien, ekstraksi
+  teks empat dialek, integrasi dua turn + percakapan berbeda, provider tanpa
+  kapabilitas, test-connection admin, preflight CORS, flag CLI, dan discovery
+  `models sync`. `go test ./...` bersih.
+
+### 14b. Belum masuk fase 14
+
+- **Harga model Go.** Tabel harga belum diisi karena Go memakai skema
+  peak/off-peak; dashboard biaya akan menampilkan harga tidak diketahui.
+- **Model gratis.** Tiga model free-tier sengaja tidak diiklankan; belum ada
+  flag untuk membukanya bagi pengguna yang memang punya akses.
+- **Session id dari body OpenCode.** Belum ada pembacaan metadata sesi khusus
+  OpenCode di body; id diambil dari header, `prompt_cache_key`, atau
+  fingerprint pesan pertama.
+- **Rotasi id.** Id tidak pernah kedaluwarsa atau dirotasi otomatis; percakapan
+  yang sangat panjang tetap memakai satu id sampai klien mengirim id baru.
+- **Provider lain.** Baru OpenCode Go yang memakai `session_header` di katalog;
+  provider lain bisa menambahkannya lewat config, tetapi belum ada preset.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1088,6 +1160,7 @@ secara interaktif maupun non-interaktif.
 | 11 | Release & benchmark | 2 hari | ✅ image 8.7 MB + BENCH.md |
 | 12 | Dashboard TPS/TTFT/latency per model | 1,5–2 hari | ✅ /api/performance + tab Performance |
 | 13 | Config CLI (provider, connection, sync model) | 2 hari | ✅ non-interaktif + wizard |
+| 14 | Builtin OpenCode Go + session header | 1 hari | ✅ `opencode-go` + `session_header` |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

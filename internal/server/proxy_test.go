@@ -407,6 +407,97 @@ func TestUpstreamConnectionFailureIs502(t *testing.T) {
 	}
 }
 
+// TestSessionHeaderIsStablePerConversation exercises the whole gateway path:
+// two turns that share a first user message must carry the same outbound
+// session id, while an unrelated conversation must carry a different one.
+func TestSessionHeaderIsStablePerConversation(t *testing.T) {
+	var sessions []string
+	_, cfg := mockUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		sessions = append(sessions, r.Header.Get("X-Opencode-Session"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	})
+	cfg.Providers[0].SessionHeader = "x-opencode-session"
+	s := newTestServer(t, cfg, nil)
+
+	turn := func(first, latest string) {
+		t.Helper()
+		body := `{"model":"testprov/test-model","messages":[` +
+			`{"role":"user","content":"` + first + `"},` +
+			`{"role":"assistant","content":"ok"},` +
+			`{"role":"user","content":"` + latest + `"}]}`
+		res := do(s, httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+			strings.NewReader(body)))
+		if res.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+		}
+	}
+
+	turn("fix the failing test", "it still fails")
+	turn("fix the failing test", "thanks, now run it again")
+	turn("write a different feature", "start with the schema")
+
+	if len(sessions) != 3 {
+		t.Fatalf("upstream saw %d requests, want 3", len(sessions))
+	}
+	for i, got := range sessions {
+		if got == "" {
+			t.Fatalf("request %d sent no X-Opencode-Session", i)
+		}
+	}
+	if sessions[0] != sessions[1] {
+		t.Errorf("same conversation moved from %q to %q", sessions[0], sessions[1])
+	}
+	if sessions[0] == sessions[2] {
+		t.Errorf("different conversations share %q", sessions[0])
+	}
+}
+
+// TestSessionHeaderPrefersClientValue proves a caller can pin the id, which is
+// what agents that already track a session expect.
+func TestSessionHeaderPrefersClientValue(t *testing.T) {
+	var got string
+	_, cfg := mockUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Opencode-Session")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	})
+	cfg.Providers[0].SessionHeader = "x-opencode-session"
+	s := newTestServer(t, cfg, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"testprov/test-model","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("X-Session-Id", "agent-session-42")
+	res := do(s, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	if got != "agent-session-42" {
+		t.Errorf("upstream session = %q, want the client value", got)
+	}
+}
+
+// TestSessionHeaderAbsentWithoutCapability keeps the feature opt-in: a provider
+// that declares no session header must see no extra request header.
+func TestSessionHeaderAbsentWithoutCapability(t *testing.T) {
+	var got string
+	_, cfg := mockUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Opencode-Session")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	})
+	s := newTestServer(t, cfg, nil)
+
+	res := do(s, httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"testprov/test-model","messages":[{"role":"user","content":"hi"}]}`)))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	if got != "" {
+		t.Errorf("provider without session_header received %q", got)
+	}
+}
+
 func TestReadyzReportsProviderCount(t *testing.T) {
 	s := newTestServer(t, testConfig(t, nil), nil)
 	res := do(s, httptest.NewRequest(http.MethodGet, "/readyz", nil))

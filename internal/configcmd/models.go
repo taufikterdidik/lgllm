@@ -16,6 +16,7 @@ import (
 
 	"lgllm/internal/config"
 	"lgllm/internal/registry"
+	"lgllm/internal/sessionid"
 )
 
 // modelItem is the union of the shapes providers use for a model listing.
@@ -38,7 +39,7 @@ func (m modelItem) ref() string {
 
 // fetchModels calls a /models endpoint and returns unique ids in provider order.
 func fetchModels(ctx context.Context, endpoint, auth, authParam, apiKey string,
-	headers map[string]string, timeout time.Duration) ([]string, error) {
+	headers map[string]string, sessionHeader, session string, timeout time.Duration) ([]string, error) {
 
 	u, err := url.Parse(endpoint)
 	if err != nil {
@@ -61,6 +62,9 @@ func fetchModels(ctx context.Context, endpoint, auth, authParam, apiKey string,
 	req.Header.Set("User-Agent", "lgllm-config")
 	for k, v := range headers {
 		req.Header.Set(k, v)
+	}
+	if sessionHeader != "" && session != "" {
+		req.Header.Set(sessionHeader, sessionid.Sanitize(session))
 	}
 	switch auth {
 	case "bearer":
@@ -205,7 +209,12 @@ func discoverFromConfig(path, masterKey, providerRef, connectionID, explicitURL 
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	models, err := fetchModels(ctx, endpoint, p.Auth, p.AuthParam, conn.APIKey, p.Headers, timeout)
+	session := ""
+	if p.SessionHeader != "" {
+		session = sessionid.Fingerprint("config:" + p.ID + ":" + conn.ID)
+	}
+	models, err := fetchModels(ctx, endpoint, p.Auth, p.AuthParam, conn.APIKey,
+		p.Headers, p.SessionHeader, session, timeout)
 	if err != nil {
 		return nil, "", err
 	}

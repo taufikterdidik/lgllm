@@ -111,7 +111,7 @@ API. The running server picks the change up on its next config poll, or send
 
 | Command | Purpose |
 |---|---|
-| `provider list\|add\|set\|remove` | catalog and custom providers, including headers and models |
+| `provider list\|add\|set\|remove` | catalog and custom providers, including headers, session header and models |
 | `connection list\|add\|set\|remove\|test` | credentials, base URL overrides, live `/models` probe |
 | `models list\|sync` | configured models; `--upstream` previews the provider list |
 | `alias list\|set\|remove` | client-facing model aliases |
@@ -284,10 +284,11 @@ wire_api = "chat"
 ```
 
 Providers are declared in `providers`/`connections`. Everything in the built-in
-catalog (anthropic, deepseek, gemini, groq, mistral, ollama, openai, openrouter)
-only needs a connection entry; a custom gateway spells out `base_url`, `format`
-and `auth`. A provider becomes usable only when at least one enabled connection
-references it and has a key (except `auth: none`, e.g. local Ollama).
+catalog (anthropic, deepseek, gemini, groq, mistral, ollama, openai,
+opencode-go, openrouter) only needs a connection entry; a custom gateway spells
+out `base_url`, `format` and `auth`. A provider becomes usable only when at least
+one enabled connection references it and has a key (except `auth: none`, e.g.
+local Ollama).
 
 ```yaml
 connections:
@@ -296,6 +297,24 @@ connections:
   - id: deepseek-main
     provider: ds
     api_key: ${DEEPSEEK_API_KEY}
+  - id: go-main
+    provider: ocg             # OpenCode Go
+    api_key: ${OPENCODE_GO_API_KEY}
+```
+
+OpenCode Go is OpenAI-compatible but requires a stable per-conversation id in
+`x-opencode-session`; without it the gateway answers `400 MissingSessionID`.
+lgllm fills the header from a client session header (`X-Lgllm-Session`,
+`X-Opencode-Session`, `X-Session-Id`, …) or, when none is present, from a
+deterministic fingerprint of the first user message, so every turn of a
+conversation reuses the same id while unrelated chats get different ones. The
+capability is declarative, so a custom gateway can opt in:
+
+```yaml
+providers:
+  - id: my-gateway
+    base_url: https://gateway.example/v1
+    session_header: x-opencode-session
 ```
 
 ## Layout
@@ -309,6 +328,7 @@ internal/registry/    provider catalog, config merge, validation, model routing
 internal/upstream/    outbound HTTP client, streaming relay, stall detection
 internal/translate/   pivot IR and OpenAI/Anthropic/Gemini/Responses translators
 internal/balancer/    credential rotation, sticky sessions, cooldown/backoff
+internal/sessionid/   stable opaque session ids for providers that require one
 internal/tokensaver/  tool-result compression (diff, grep, JSON, logs)
 internal/metrics/     Prometheus text exposition
 internal/perf/        per-model attempt window + read-only SSE usage tap

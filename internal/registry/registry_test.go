@@ -39,6 +39,66 @@ func TestMaterializeInheritsCatalog(t *testing.T) {
 	}
 }
 
+func TestOpenCodeGoCatalog(t *testing.T) {
+	b, ok := CatalogByRef("opencode-go")
+	if !ok {
+		t.Fatal("opencode-go is missing from the catalog")
+	}
+	if b.Alias != "ocg" {
+		t.Errorf("alias = %q", b.Alias)
+	}
+	if b.BaseURL != "https://opencode.ai/inference/go/openai/v1" {
+		t.Errorf("base_url = %q", b.BaseURL)
+	}
+	if b.Format != FormatChat || b.Auth != "bearer" {
+		t.Errorf("format/auth = %q/%q", b.Format, b.Auth)
+	}
+	if b.SessionHeader != "x-opencode-session" {
+		t.Errorf("session_header = %q", b.SessionHeader)
+	}
+	if b.KeyEnv != "OPENCODE_GO_API_KEY" {
+		t.Errorf("key_env = %q", b.KeyEnv)
+	}
+	if len(b.Models) < 20 {
+		t.Errorf("models = %d, want the documented Go list", len(b.Models))
+	}
+
+	// A connection alone is enough to materialize the provider.
+	cfg := config.Default()
+	cfg.Connections = []config.Connection{{ID: "go", Provider: "ocg", APIKey: "oc_sk_test"}}
+	got := Materialize(cfg.Providers, cfg.Connections)
+	if len(got) != 1 || got[0].ID != "opencode-go" {
+		t.Fatalf("materialized = %+v", got)
+	}
+	if got[0].SessionHeader != "x-opencode-session" {
+		t.Errorf("materialized session_header = %q", got[0].SessionHeader)
+	}
+}
+
+func TestValidateSessionHeader(t *testing.T) {
+	base := func() config.Config {
+		cfg := config.Default()
+		cfg.Providers = []config.Provider{{
+			ID: "gw", BaseURL: "https://gw.example/v1", SessionHeader: "x-session-id",
+		}}
+		cfg.Connections = []config.Connection{{ID: "c", Provider: "gw", APIKey: "k"}}
+		return cfg
+	}
+
+	cfg := base()
+	if err := Validate(&cfg); err != nil {
+		t.Fatalf("valid session_header rejected: %v", err)
+	}
+
+	for _, name := range []string{"bad header", "authorization", "content-length"} {
+		cfg := base()
+		cfg.Providers[0].SessionHeader = name
+		if err := Validate(&cfg); err == nil {
+			t.Errorf("Validate accepted session_header %q", name)
+		}
+	}
+}
+
 func TestMaterializeOverrideWins(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Providers = []config.Provider{{

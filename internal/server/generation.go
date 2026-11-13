@@ -139,19 +139,22 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, in ingress) {
 		}
 	}
 
+	requestID := RequestID(r.Context())
+	clientKey := clientIdentity(r)
 	req := &generationRequest{
-		in:        in,
-		body:      body,
-		payload:   payload,
-		requested: requested,
-		stream:    stream,
-		session:   sessionKey(r, payload),
-		pivot:     pivot,
-		stats:     stats,
-		saving:    saving,
-		start:     start,
-		requestID: RequestID(r.Context()),
-		clientKey: clientIdentity(r),
+		in:           in,
+		body:         body,
+		payload:      payload,
+		requested:    requested,
+		stream:       stream,
+		session:      sessionKey(r, payload),
+		conversation: conversationSession(r, payload, requestID, clientKey),
+		pivot:        pivot,
+		stats:        stats,
+		saving:       saving,
+		start:        start,
+		requestID:    requestID,
+		clientKey:    clientKey,
 	}
 	s.runPlan(w, r, req, plan)
 }

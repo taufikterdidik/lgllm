@@ -53,7 +53,10 @@ type Builtin struct {
 	Auth      string
 	AuthParam string
 	Headers   map[string]string
-	Models    []string
+	// SessionHeader names an outbound header that must carry a stable
+	// per-conversation id. Empty means the provider needs none.
+	SessionHeader string
+	Models        []string
 	// KeyEnv is the conventional environment variable for the API key.
 	KeyEnv string
 	Site   string
@@ -120,6 +123,48 @@ var catalog = []Builtin{
 		Format:  FormatChat, Auth: "bearer",
 		Models: []string{"deepseek/deepseek-chat", "google/gemini-2.5-pro"},
 		KeyEnv: "OPENROUTER_API_KEY", Site: "https://openrouter.ai",
+	},
+	{
+		// Go translates every text model to the OpenAI Chat surface, so one
+		// catalog entry covers the whole model list. The session header is
+		// mandatory since September 2026: the gateway answers 400
+		// MissingSessionID without a stable per-conversation id.
+		ID: "opencode-go", Alias: "ocg", Name: "OpenCode Go",
+		BaseURL: "https://opencode.ai/inference/go/openai/v1",
+		Format:  FormatChat, Auth: "bearer",
+		SessionHeader: "x-opencode-session",
+		Models: []string{
+			"grok-4.7",
+			"gpt-6-luna",
+			"gpt-5.6-luna",
+			"claude-haiku-5-5",
+			"gemini-4-argon",
+			"glm-5.3-flash",
+			"glm-5.3",
+			"glm-5.2",
+			"kimi-k3.1-pro",
+			"kimi-k3",
+			"kimi-k2.7-code",
+			"longcat-2.0",
+			"deepseek-v4.1-flash",
+			"deepseek-v4-pro",
+			"mimo-v2.6-flash",
+			"mimo-v2.6-pro",
+			"mimo-v2.5",
+			"mimo-v2.5-pro",
+			"minimax-m3.1-flash",
+			"minimax-m3",
+			"muse-spark-1.3-contributor",
+			"muse-spark-1.2-contributor",
+			"qwen3.8-max",
+			"qwen3.8-flash",
+			"qwen3.7-plus",
+			"hy4",
+			"hy4-preview",
+			"hy3",
+			"step-5-preview",
+		},
+		KeyEnv: "OPENCODE_GO_API_KEY", Site: "https://opencode.ai/docs/go",
 	},
 	{
 		ID: "openai", Alias: "oa", Name: "openai",
@@ -217,12 +262,13 @@ func Materialize(cfg []config.Provider, conns []config.Connection) []config.Prov
 
 func fromCatalog(b Builtin) config.Provider {
 	p := config.Provider{
-		ID:        b.ID,
-		Alias:     b.Alias,
-		BaseURL:   b.BaseURL,
-		Format:    b.Format,
-		Auth:      b.Auth,
-		AuthParam: b.AuthParam,
+		ID:            b.ID,
+		Alias:         b.Alias,
+		BaseURL:       b.BaseURL,
+		Format:        b.Format,
+		Auth:          b.Auth,
+		AuthParam:     b.AuthParam,
+		SessionHeader: b.SessionHeader,
 	}
 	if len(b.Headers) > 0 {
 		p.Headers = make(map[string]string, len(b.Headers))
@@ -251,6 +297,9 @@ func mergeOverride(dst, src *config.Provider) {
 	}
 	if src.AuthParam != "" {
 		dst.AuthParam = src.AuthParam
+	}
+	if src.SessionHeader != "" {
+		dst.SessionHeader = src.SessionHeader
 	}
 	if len(src.Headers) > 0 {
 		if dst.Headers == nil {
@@ -317,6 +366,9 @@ func Validate(cfg *config.Config) error {
 			}
 		default:
 			add("provider %q auth %q is not one of bearer|x-api-key|query|none", p.ID, p.Auth)
+		}
+		if err := validateSessionHeader(p.SessionHeader); err != nil {
+			add("provider %q: %v", p.ID, err)
 		}
 		for j, m := range p.Models {
 			if strings.TrimSpace(m.ID) == "" {
@@ -514,6 +566,34 @@ func validateEndpoint(raw string) error {
 	return nil
 }
 
+// validateSessionHeader rejects names that net/http cannot send or that lgllm
+// owns. A provider may pick any other header for its per-conversation id.
+func validateSessionHeader(name string) error {
+	if name == "" {
+		return nil
+	}
+	for i := 0; i < len(name); i++ {
+		if !isHeaderTokenByte(name[i]) {
+			return fmt.Errorf("session_header %q is not a valid HTTP header name", name)
+		}
+	}
+	switch strings.ToLower(name) {
+	case "host", "content-length", "content-type", "authorization",
+		"proxy-authorization", "connection", "transfer-encoding", "upgrade",
+		"te", "trailer":
+		return fmt.Errorf("session_header %q is managed by lgllm and cannot be used", name)
+	}
+	return nil
+}
+
+func isHeaderTokenByte(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	}
+	return strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c))
+}
+
 // Provider is a provider plus its credentials, ready to serve a request.
 type Provider struct {
 	ID        string
@@ -523,8 +603,11 @@ type Provider struct {
 	Auth      string
 	AuthParam string
 	Headers   map[string]string
-	Timeout   time.Duration
-	Models    []Model
+	// SessionHeader is the outbound header that receives a stable
+	// per-conversation id, or empty when the provider needs none.
+	SessionHeader string
+	Timeout       time.Duration
+	Models        []Model
 
 	// connections holds enabled credentials in config order. Phase 5 rotates
 	// across them; phase 2 uses the first.
@@ -605,14 +688,15 @@ func New(cfg *config.Config) (*Registry, error) {
 		}
 
 		p := &Provider{
-			ID:        pc.ID,
-			Alias:     pc.Alias,
-			BaseURL:   strings.TrimRight(pc.BaseURL, "/"),
-			Format:    pc.Format,
-			Auth:      pc.Auth,
-			AuthParam: pc.AuthParam,
-			Headers:   copyMap(pc.Headers),
-			Timeout:   pc.Timeout.Std(),
+			ID:            pc.ID,
+			Alias:         pc.Alias,
+			BaseURL:       strings.TrimRight(pc.BaseURL, "/"),
+			Format:        pc.Format,
+			Auth:          pc.Auth,
+			AuthParam:     pc.AuthParam,
+			Headers:       copyMap(pc.Headers),
+			SessionHeader: pc.SessionHeader,
+			Timeout:       pc.Timeout.Std(),
 		}
 		for _, m := range pc.Models {
 			p.Models = append(p.Models, Model{

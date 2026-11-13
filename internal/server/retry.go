@@ -30,6 +30,10 @@ type generationRequest struct {
 	// session makes connection choice sticky so an upstream prompt cache stays
 	// warm across turns of the same conversation.
 	session string
+	// conversation is the id sent in a provider's session_header. Unlike
+	// session it always has a value (explicit header, prompt_cache_key, or a
+	// deterministic fingerprint), so a gateway that requires one is satisfied.
+	conversation string
 
 	// pivot is the decoded client body, present when translation or the token
 	// saver needs it. stats/saving describe what the saver did.
@@ -201,17 +205,19 @@ func (s *Server) tryConnection(
 	} else {
 		upReq.Header.Set("Accept", "application/json")
 	}
-	// Attribution headers some providers require, plus the caller's user agent
-	// because a few providers gate on known clients. The inbound Authorization
-	// is never forwarded, so a client key cannot leak upstream.
-	for _, h := range []string{"User-Agent", "HTTP-Referer", "X-Title", "Anthropic-Beta"} {
+	// Attribution headers some providers require. The caller's user agent is
+	// forwarded too because a few providers gate on known clients. The inbound
+	// Authorization is never forwarded, so a client key cannot leak upstream.
+	for _, h := range []string{"HTTP-Referer", "X-Title", "Anthropic-Beta"} {
 		if v := r.Header.Get(h); v != "" {
 			upReq.Header.Set(h, v)
 		}
 	}
+	applyUserAgent(upReq, r)
 	for k, v := range provider.Headers {
 		upReq.Header.Set(k, v)
 	}
+	applySessionHeader(upReq, provider, req.conversation)
 	if provider.Format == registry.FormatAnthropic && upReq.Header.Get("anthropic-version") == "" {
 		// The Messages API rejects a request without this header. A custom
 		// provider definition often forgets it; the catalog entry carries it.
@@ -644,29 +650,6 @@ func (s *Server) writeFailures(w http.ResponseWriter, req *generationRequest, pl
 		},
 		"attempts": failures,
 	})
-}
-
-// sessionKey finds the conversation identifier used for sticky credentials.
-//
-// Claude Code and some OpenAI clients send an explicit header; Anthropic also
-// carries metadata.user_id. Any stable key is enough to keep a prompt cache on
-// one account, so the first available one wins.
-func sessionKey(r *http.Request, payload map[string]json.RawMessage) string {
-	for _, h := range []string{"X-Lgllm-Session", "X-Session-Id"} {
-		if v := strings.TrimSpace(r.Header.Get(h)); v != "" {
-			return v
-		}
-	}
-	var meta struct {
-		UserID string `json:"user_id"`
-	}
-	if raw, ok := payload["metadata"]; ok {
-		_ = json.Unmarshal(raw, &meta)
-		if meta.UserID != "" {
-			return meta.UserID
-		}
-	}
-	return rawString(payload["prompt_cache_key"])
 }
 
 // planSummary builds the one-line reason returned when every attempt failed.

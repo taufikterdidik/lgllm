@@ -33,13 +33,26 @@ const adminTestToken = "sk-admin-token-123"
 // server reads.
 func newAdminTestServer(t *testing.T, usage bool) (*Server, *admin.Manager, string) {
 	t.Helper()
-	_, cfg := mockUpstream(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{
-		  "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
-		  "usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}
-		}`)
-	})
+	return newAdminTestServerWith(t, usage, nil, nil)
+}
+
+// newAdminTestServerWith is newAdminTestServer with a config hook and an
+// upstream handler, so a test can observe what the admin API puts on the wire.
+func newAdminTestServerWith(t *testing.T, usage bool, mutate func(*config.Config), handler http.HandlerFunc) (*Server, *admin.Manager, string) {
+	t.Helper()
+	if handler == nil {
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{
+			  "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+			  "usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}
+			}`)
+		}
+	}
+	_, cfg := mockUpstream(t, handler)
+	if mutate != nil {
+		mutate(cfg)
+	}
 	cfg.Admin = config.Admin{Enabled: true, Token: adminTestToken}
 	cfg.TokenSaver.Enabled = false
 
@@ -280,6 +293,38 @@ func TestAdminUsageAndTestConnection(t *testing.T) {
 	}
 	if !result.OK || !result.Reachable || result.Status != 200 {
 		t.Errorf("test-connection = %+v", result)
+	}
+}
+
+func TestAdminTestConnectionSendsSessionHeader(t *testing.T) {
+	var got string
+	s, _, _ := newAdminTestServerWith(t, false, func(c *config.Config) {
+		c.Providers[0].SessionHeader = "x-opencode-session"
+	}, func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Opencode-Session")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	})
+
+	res := do(s, adminRequest(http.MethodPost, "/api/test-connection", adminTestToken,
+		`{"provider":"testprov","session":"ses_admin_test"}`))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	if got != "ses_admin_test" {
+		t.Errorf("upstream session = %q, want the explicit value", got)
+	}
+
+	// Without an explicit id the admin probe still needs a non-empty stable id
+	// or a gateway with a mandatory session header rejects it.
+	got = ""
+	res = do(s, adminRequest(http.MethodPost, "/api/test-connection", adminTestToken,
+		`{"provider":"testprov"}`))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	if got == "" {
+		t.Error("test-connection sent no session header")
 	}
 }
 

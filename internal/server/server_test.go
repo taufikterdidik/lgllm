@@ -171,6 +171,9 @@ func TestPreflightIsAnsweredWithoutAuth(t *testing.T) {
 	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
 		t.Errorf("Allow-Origin = %q", got)
 	}
+	if got := res.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "X-Opencode-Session") {
+		t.Errorf("Allow-Headers = %q, want the session header", got)
+	}
 }
 
 func TestUnknownPathIs404(t *testing.T) {

@@ -107,6 +107,27 @@ func TestProviderAndConnectionLifecycle(t *testing.T) {
 	}
 }
 
+func TestProviderSessionHeaderFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	mustRun(t, path, "", "init")
+	mustRun(t, path, "", "provider", "add", "--id", "gw",
+		"--base-url", "https://gw.example/v1", "--session-header", "x-opencode-session")
+
+	cfg := readConfig(t, path)
+	if len(cfg.Providers) != 1 {
+		t.Fatalf("providers: %+v", cfg.Providers)
+	}
+	if got := cfg.Providers[0].SessionHeader; got != "x-opencode-session" {
+		t.Fatalf("session_header = %q", got)
+	}
+
+	// An empty value clears the field again.
+	mustRun(t, path, "", "provider", "set", "gw", "--session-header", "")
+	if got := readConfig(t, path).Providers[0].SessionHeader; got != "" {
+		t.Fatalf("session_header = %q, want it removed", got)
+	}
+}
+
 func TestCatalogAliasAndEnvPlaceholder(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -276,6 +297,38 @@ providers:
 				t.Fatalf("models: %+v", models)
 			}
 		})
+	}
+}
+
+func TestModelsSyncSendsSessionHeader(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Opencode-Session")
+		fmt.Fprint(w, `{"data":[{"id":"model-a"}]}`)
+	}))
+	defer srv.Close()
+
+	body := fmt.Sprintf(`server:
+  listen: 127.0.0.1:0
+providers:
+  - id: go
+    base_url: %s/v1
+    format: openai
+    auth: bearer
+    session_header: x-opencode-session
+connections:
+  - id: main
+    provider: go
+    api_key: secret
+`, srv.URL)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mustRun(t, path, "", "models", "sync", "--provider", "go")
+	if !strings.HasPrefix(got, "ses_") {
+		t.Fatalf("session header = %q, want a deterministic ses_ id", got)
 	}
 }
 
