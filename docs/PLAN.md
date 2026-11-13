@@ -1143,6 +1143,68 @@ lewat config tanpa mengubah kode proxy.
 
 ---
 
+## 15. Builtin provider Command Code — ✅ SELESAI
+
+> Status: `commandcode` (alias `cmd`) dan `commandcode-claude` (alias `cmdc`)
+> tersedia di katalog bawaan. Keduanya memakai base URL
+> `https://api.commandcode.ai/provider/v1` dengan auth bearer
+> `COMMAND_CODE_API_KEY`. `cmd` melayani model OpenAI/chat lewat
+> `/chat/completions`; `cmdc` melayani model Claude lewat `/messages`.
+
+Dokumentasi Command Code menyebut satu base URL, tetapi tidak satu format:
+Claude hanya menjawab di `/v1/messages`, sedangkan model lain di
+`/v1/chat/completions` (dan sebagian di `/v1/responses`). lgllm memilih format
+per provider, bukan per model, jadi dua entri katalog adalah representasi yang
+jujur tanpa menambah lapisan routing baru.
+
+### 15a. Keputusan implementasi — ✅ SELESAI
+
+- **Dua entri, satu key.** `commandcode` memakai `FormatChat`, sedangkan
+  `commandcode-claude` memakai `FormatAnthropic`. Keduanya berbagi base URL,
+  auth bearer, dan `KeyEnv: COMMAND_CODE_API_KEY`. Pengguna yang ingin kedua
+  kelompok model menambahkan satu koneksi untuk masing-masing provider.
+- **Daftar model dari API live.** Hint `cmd` berisi 86 model yang mendukung
+  `/chat/completions`; `cmdc` berisi 12 model Claude yang hanya mendukung
+  `/messages`. Model dengan prefix vendor (`deepseek/...`, `Qwen/...`,
+  `moonshotai/...`) disimpan apa adanya; saat dipanggil lewat lgllm gunakan
+  prefix provider, mis. `cmd/deepseek/deepseek-v4-flash`.
+- **Model gratis ikut diiklankan.** `inkling-2-small:free` dan
+  `glyph-cluster:free` adalah model resmi Provider API dengan batas harian,
+  berbeda dari model gratis OpenCode Go yang bisa ditolak di luar kliennya.
+- **Tanpa session header.** Command Code tidak mewajibkan header sesi; fitur
+  `session_header` tetap tersedia bila provider lain membutuhkannya.
+- **Tanpa ZDR default.** Header `x-cmd-zdr: 1` tidak dikirim otomatis karena
+  dapat menggagalkan model tanpa upstream ZDR (`422 cmd_zdr_no_providers`).
+- **Responses endpoint.** Format `openai-responses` didukung registry, tetapi
+  lgllm belum membuka ingress `/v1/responses`; karena itu entri chat memakai
+  Chat Completions yang sudah menjadi pivot. Model yang hanya punya
+  `/responses` belum bisa dipakai.
+- **Anthropic version.** Proxy menambahkan `anthropic-version: 2023-06-01`
+  untuk provider `FormatAnthropic` bila belum diisi, sehingga `cmdc` langsung
+  bekerja lewat `/v1/messages`.
+- **Verifikasi.** Test katalog memastikan base URL, format, key env, pemisahan
+  model Claude/non-Claude, dan materialisasi kedua alias menjadi provider
+  terpisah. `go test ./...` bersih.
+
+### 15b. Belum masuk fase 15
+
+- **Routing per model.** Belum ada satu provider yang otomatis memilih
+  `/messages` untuk Claude dan `/chat/completions` untuk model lain; pengguna
+  memilih entri `cmd` atau `cmdc`.
+- **Ingress Responses.** `/v1/responses` belum dilayani, jadi klien yang hanya
+  bisa memakai Responses API belum bisa memakai model yang hanya mendukung
+  endpoint itu.
+- **Endpoint `systemone`.** Model keputusan `typesafe/jev` memakai bentuk
+  request non-chat dan tidak diiklankan sebagai model chat.
+- **ZDR opt-in.** Belum ada opsi config/CLI untuk selalu mengirim
+  `x-cmd-zdr: 1`; header bisa ditambahkan manual lewat `headers`.
+- **Harga.** Tarif per model Command Code belum masuk tabel `internal/pricing`;
+  dashboard biaya akan menampilkan biaya tidak diketahui.
+- **Metadata model.** `context_length` dan `supported_endpoints` dari
+  `/provider/v1/models` belum diisi otomatis ke config oleh `models sync`.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1161,6 +1223,7 @@ lewat config tanpa mengubah kode proxy.
 | 12 | Dashboard TPS/TTFT/latency per model | 1,5–2 hari | ✅ /api/performance + tab Performance |
 | 13 | Config CLI (provider, connection, sync model) | 2 hari | ✅ non-interaktif + wizard |
 | 14 | Builtin OpenCode Go + session header | 1 hari | ✅ `opencode-go` + `session_header` |
+| 15 | Builtin Command Code (chat + Claude) | 1 hari | ✅ `commandcode` + `commandcode-claude` |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

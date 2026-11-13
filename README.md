@@ -284,11 +284,11 @@ wire_api = "chat"
 ```
 
 Providers are declared in `providers`/`connections`. Everything in the built-in
-catalog (anthropic, deepseek, gemini, groq, mistral, ollama, openai,
-opencode-go, openrouter) only needs a connection entry; a custom gateway spells
-out `base_url`, `format` and `auth`. A provider becomes usable only when at least
-one enabled connection references it and has a key (except `auth: none`, e.g.
-local Ollama).
+catalog (anthropic, commandcode, commandcode-claude, deepseek, gemini, groq,
+mistral, ollama, openai, opencode-go, openrouter) only needs a connection entry;
+a custom gateway spells out `base_url`, `format` and `auth`. A provider becomes
+usable only when at least one enabled connection references it and has a key
+(except `auth: none`, e.g. local Ollama).
 
 ```yaml
 connections:
@@ -300,6 +300,12 @@ connections:
   - id: go-main
     provider: ocg             # OpenCode Go
     api_key: ${OPENCODE_GO_API_KEY}
+  - id: commandcode-main
+    provider: cmd
+    api_key: ${COMMAND_CODE_API_KEY}
+  - id: commandcode-claude
+    provider: cmdc            # Claude models need the Messages surface
+    api_key: ${COMMAND_CODE_API_KEY}
 ```
 
 OpenCode Go is OpenAI-compatible but requires a stable per-conversation id in
@@ -316,6 +322,15 @@ providers:
     base_url: https://gateway.example/v1
     session_header: x-opencode-session
 ```
+
+Command Code is also built in. It serves OpenAI chat models and Claude models
+from the same base URL, but Claude only answers on the Anthropic Messages
+endpoint, so the catalog has two entries: `commandcode` (`cmd`) for the chat
+models and `commandcode-claude` (`cmdc`) for Claude. Both read
+`COMMAND_CODE_API_KEY`; add a connection to each if you want both groups. The
+model hints come from `GET /provider/v1/models`; a model id is still forwarded
+unchanged, so vendor-prefixed ids such as `deepseek/deepseek-v4-flash` work even
+when they are not listed.
 
 ## Layout
 

@@ -75,6 +75,106 @@ func TestOpenCodeGoCatalog(t *testing.T) {
 	}
 }
 
+func TestCommandCodeCatalog(t *testing.T) {
+	chat, ok := CatalogByRef("cmd")
+	if !ok {
+		t.Fatal("commandcode is missing from the catalog")
+	}
+	if chat.ID != "commandcode" || chat.Alias != "cmd" {
+		t.Errorf("id/alias = %q/%q", chat.ID, chat.Alias)
+	}
+	if chat.BaseURL != "https://api.commandcode.ai/provider/v1" {
+		t.Errorf("base_url = %q", chat.BaseURL)
+	}
+	if chat.Format != FormatChat || chat.Auth != "bearer" {
+		t.Errorf("format/auth = %q/%q", chat.Format, chat.Auth)
+	}
+	if chat.KeyEnv != "COMMAND_CODE_API_KEY" {
+		t.Errorf("key_env = %q", chat.KeyEnv)
+	}
+	if len(chat.Models) < 80 {
+		t.Errorf("models = %d, want the chat-capable list", len(chat.Models))
+	}
+	if !containsString(chat.Models, "deepseek/deepseek-v4-flash") {
+		t.Error("a known chat model is missing")
+	}
+	for _, id := range chat.Models {
+		if strings.HasPrefix(id, "claude-") {
+			t.Errorf("chat entry advertises Claude model %q, which only answers on /messages", id)
+		}
+	}
+
+	// Claude models live on the Anthropic Messages surface; lgllm cannot send
+	// them to /chat/completions, so they get their own catalog entry.
+	claude, ok := CatalogByRef("cmdc")
+	if !ok {
+		t.Fatal("commandcode-claude is missing from the catalog")
+	}
+	if claude.ID != "commandcode-claude" || claude.Format != FormatAnthropic {
+		t.Errorf("id/format = %q/%q", claude.ID, claude.Format)
+	}
+	if claude.BaseURL != chat.BaseURL || claude.KeyEnv != chat.KeyEnv {
+		t.Errorf("Claude entry does not share the base URL and key env")
+	}
+	if len(claude.Models) == 0 {
+		t.Error("Claude entry has no model hints")
+	}
+	for _, id := range claude.Models {
+		if !strings.HasPrefix(id, "claude-") {
+			t.Errorf("Claude entry advertises non-Claude model %q", id)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Connections = []config.Connection{
+		{ID: "cmd-main", Provider: "cmd", APIKey: "cmd-key"},
+		{ID: "cmdc-main", Provider: "cmdc", APIKey: "cmd-key"},
+	}
+	got := Materialize(cfg.Providers, cfg.Connections)
+	if len(got) != 2 {
+		t.Fatalf("materialized = %+v", got)
+	}
+	byID := make(map[string]config.Provider, len(got))
+	for _, p := range got {
+		byID[p.ID] = p
+	}
+	if byID["commandcode"].Format != FormatChat {
+		t.Errorf("materialized commandcode format = %q", byID["commandcode"].Format)
+	}
+	if byID["commandcode-claude"].Format != FormatAnthropic {
+		t.Errorf("materialized Claude format = %q", byID["commandcode-claude"].Format)
+	}
+
+	// A vendor-prefixed model keeps its slash after the provider prefix.
+	reg, err := New(&cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	p, model, err := reg.Resolve("cmd/deepseek/deepseek-v4-flash")
+	if err != nil {
+		t.Fatalf("Resolve chat: %v", err)
+	}
+	if p.ID != "commandcode" || model != "deepseek/deepseek-v4-flash" {
+		t.Errorf("chat route = %s/%s", p.ID, model)
+	}
+	p, model, err = reg.Resolve("cmdc/claude-sonnet-5-5")
+	if err != nil {
+		t.Fatalf("Resolve Claude: %v", err)
+	}
+	if p.ID != "commandcode-claude" || model != "claude-sonnet-5-5" {
+		t.Errorf("Claude route = %s/%s", p.ID, model)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateSessionHeader(t *testing.T) {
 	base := func() config.Config {
 		cfg := config.Default()
