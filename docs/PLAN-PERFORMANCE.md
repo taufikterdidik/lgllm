@@ -1,7 +1,8 @@
 # Rencana: dashboard performa per model upstream
 
 Status: **✅ diimplementasikan** (lihat `docs/PLAN.md` bagian 12a/12b untuk
-keputusan akhir dan fitur yang ditunda)
+keputusan fase awal dan 16a/16b untuk grafik time-series, breakdown
+per-connection, low-sample, serta gauge Prometheus)
 
 ## Tujuan
 

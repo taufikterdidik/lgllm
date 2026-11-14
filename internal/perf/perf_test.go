@@ -99,6 +99,66 @@ func TestSnapshotIsSorted(t *testing.T) {
 	}
 }
 
+func TestConnectionBreakdownIsSeparateFromModelWindow(t *testing.T) {
+	r := New(2)
+	base := time.Unix(2000, 0)
+	// Two credentials serve the same model. The model window keeps the latest
+	// two attempts overall; each credential keeps its own latest two.
+	r.RecordConnection("p", "m", "a", Sample{At: base, OK: true, Stream: true, TPS: 10})
+	r.RecordConnection("p", "m", "b", Sample{At: base.Add(time.Second), OK: false})
+	r.RecordConnection("p", "m", "a", Sample{At: base.Add(2 * time.Second), OK: true, Stream: true, TPS: 30})
+	r.RecordConnection("p", "m", "a", Sample{At: base.Add(3 * time.Second), OK: true, Stream: true, TPS: 40})
+
+	model := r.Snapshot()
+	if len(model) != 1 {
+		t.Fatalf("model aggregates = %d, want 1", len(model))
+	}
+	if model[0].Attempts != 2 || model[0].Successes != 2 || model[0].Failures != 0 {
+		t.Errorf("model window = %d/%d/%d, want the latest 2 attempts",
+			model[0].Attempts, model[0].Successes, model[0].Failures)
+	}
+	if model[0].Connection != "" {
+		t.Errorf("model aggregate connection = %q, want empty", model[0].Connection)
+	}
+
+	conns := r.SnapshotConnections()
+	if len(conns) != 2 {
+		t.Fatalf("connection aggregates = %d, want 2", len(conns))
+	}
+	byConn := make(map[string]Aggregate, len(conns))
+	for _, a := range conns {
+		byConn[a.Connection] = a
+	}
+	if a := byConn["a"]; a.Attempts != 2 || a.Successes != 2 || !a.Stream.TPSKnown {
+		t.Errorf("connection a = %+v", a)
+	}
+	if a := byConn["b"]; a.Attempts != 1 || a.Failures != 1 {
+		t.Errorf("connection b = %+v", a)
+	}
+	if got, want := byConn["a"].Stream.AvgTPS, float64(35); got != want {
+		t.Errorf("connection a avg TPS = %v, want %v", got, want)
+	}
+}
+
+func TestSeriesIsOldestFirstAndIncludesFailures(t *testing.T) {
+	r := New(2)
+	base := time.Unix(3000, 0)
+	r.Record("p", "m", Sample{At: base, OK: true, Stream: true, TPS: 5})
+	r.Record("p", "m", Sample{At: base.Add(time.Second), OK: false, Stream: true})
+	r.Record("p", "m", Sample{At: base.Add(2 * time.Second), OK: true, Stream: true, TPS: 9})
+
+	series := r.Series("p", "m")
+	if len(series) != 2 {
+		t.Fatalf("series = %d samples, want the window size 2", len(series))
+	}
+	if !series[0].At.Equal(base.Add(time.Second)) || series[0].OK || !series[1].OK {
+		t.Errorf("series = %+v, want the latest two oldest-first", series)
+	}
+	if got := r.Series("p", "missing"); got != nil {
+		t.Errorf("missing series = %+v, want nil", got)
+	}
+}
+
 func readTap(t *testing.T, payload string, format string, chunk int) TapStats {
 	t.Helper()
 	tap := NewSSETap(io.NopCloser(strings.NewReader(payload)), format)

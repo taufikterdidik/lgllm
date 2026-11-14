@@ -298,27 +298,260 @@ function fmtTps(mode) {
   return mode.avg_tps.toFixed(1) + (mode.tps_estimated ? ' est.' : '');
 }
 
+// pickPerfMode chooses the mode whose TPS is most useful. When no provider sent
+// usage, it falls back to whichever mode has samples so TTFT/latency still
+// render instead of showing an empty row.
+function pickPerfMode(m) {
+  const hasTps = (s) => s && s.avg_tps !== null && s.avg_tps !== undefined;
+  if (hasTps(m.stream)) return m.stream;
+  if (hasTps(m.non_stream)) return m.non_stream;
+  return m.stream.samples > 0 ? m.stream : m.non_stream;
+}
+
+function perfModes(m) {
+  const modes = [];
+  if (m.stream.samples > 0) modes.push('stream ' + m.stream.samples);
+  if (m.non_stream.samples > 0) modes.push('non-stream ' + m.non_stream.samples);
+  return modes.length ? modes.join(' · ') : '—';
+}
+
+function tpsCell(mode) {
+  const node = el('span', { text: fmtTps(mode) });
+  if (mode.low_sample) {
+    node.appendChild(document.createTextNode(' '));
+    node.appendChild(badge('low'));
+  }
+  return node;
+}
+
+const svgNS = 'http://www.w3.org/2000/svg';
+
+function svgEl(tag, attrs = {}, children = []) {
+  const node = document.createElementNS(svgNS, tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  for (const child of [].concat(children)) {
+    node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+  }
+  return node;
+}
+
+// sparkline is a tiny TPS trend for the table. Failed samples are marked at the
+// baseline so a row with many failures is distinguishable from a fast model.
+function sparkline(samples, key) {
+  samples = samples || [];
+  const points = samples.map((s, i) => ({ s, i }))
+    .filter((p) => p.s.ok && typeof p.s[key] === 'number' && isFinite(p.s[key]));
+  if (!points.length) return el('span', { class: 'muted', text: '—' });
+
+  const width = 110, height = 26, pad = 3;
+  const values = points.map((p) => p.s[key]);
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = max - min;
+  const x = (i) => samples.length <= 1 ? width / 2 : pad + (i / (samples.length - 1)) * (width - 2 * pad);
+  const y = (v) => height - pad - (span === 0 ? 0 : (v - min) / span) * (height - 2 * pad);
+
+  const children = [];
+  const title = samples.map((s) => {
+    const t = new Date(s.at).toLocaleTimeString();
+    if (!s.ok) return t + ' · failed';
+    const v = s[key];
+    return t + ' · ' + (typeof v === 'number' && isFinite(v) ? v.toFixed(1) : 'n/a');
+  }).join('\n');
+  children.push(svgEl('title', {}, [title]));
+  samples.forEach((s, i) => {
+    if (!s.ok) children.push(svgEl('circle', {
+      cx: x(i), cy: height - 2, r: '1.5', fill: '#f2777a',
+    }));
+  });
+  children.push(svgEl('polyline', {
+    points: points.map((p) => x(p.i) + ',' + y(p.s[key])).join(' '),
+    fill: 'none', stroke: '#6ea8fe', 'stroke-width': '1.5',
+    'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+  }));
+  points.forEach((p) => {
+    children.push(svgEl('circle', {
+      cx: x(p.i), cy: y(p.s[key]), r: '1.7', fill: '#6ea8fe',
+    }));
+  });
+  return svgEl('svg', {
+    viewBox: '0 0 ' + width + ' ' + height, class: 'spark', role: 'img',
+  }, children);
+}
+
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / p;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * p;
+}
+
+// lineChart draws one or more series over the attempt ring, including red
+// markers for failed attempts. It is deliberately plain SVG: no chart library,
+// no build step, and the same code works for TTFT, latency and TPS.
+function lineChart(samples, specs, unit) {
+  samples = samples || [];
+  const series = specs.map((spec) => ({
+    spec,
+    points: samples.map((s, i) => ({ s, i }))
+      .filter((p) => p.s.ok && typeof p.s[spec.key] === 'number' && isFinite(p.s[spec.key])),
+  })).filter((s) => s.points.length);
+  if (!series.length) return el('p', { class: 'muted', text: 'n/a' });
+
+  const width = 760, height = 150;
+  const left = 46, right = 10, top = 12, bottom = 22;
+  const plotW = width - left - right, plotH = height - top - bottom;
+  const max = niceMax(Math.max(...series.flatMap((s) => s.points.map((p) => p.s[s.spec.key]))));
+  const x = (i) => samples.length <= 1 ? left + plotW / 2 : left + (i / (samples.length - 1)) * plotW;
+  const y = (v) => top + plotH - (v / max) * plotH;
+
+  const children = [];
+  for (let i = 0; i <= 2; i++) {
+    const v = max * i / 2;
+    const yy = y(v);
+    children.push(svgEl('line', {
+      x1: left, x2: width - right, y1: yy, y2: yy,
+      stroke: '#262c36', 'stroke-width': '1',
+    }));
+    children.push(svgEl('text', {
+      x: left - 6, y: yy + 3, 'text-anchor': 'end', fill: '#8b93a3', 'font-size': '10',
+    }, [unit === 'ms' ? Math.round(v) + 'ms' : v.toFixed(1)]));
+  }
+  samples.forEach((s, i) => {
+    if (s.ok) return;
+    const xx = x(i);
+    children.push(svgEl('line', {
+      x1: xx, x2: xx, y1: top, y2: top + plotH,
+      stroke: '#f2777a', 'stroke-width': '1', 'stroke-dasharray': '2 3', opacity: '0.7',
+    }, [svgEl('title', {}, [new Date(s.at).toLocaleTimeString() + ' · failed'])]));
+  });
+  for (const { spec, points } of series) {
+    children.push(svgEl('polyline', {
+      points: points.map((p) => x(p.i) + ',' + y(p.s[spec.key])).join(' '),
+      fill: 'none', stroke: spec.color, 'stroke-width': '1.6',
+      'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+    }));
+    for (const p of points) {
+      children.push(svgEl('circle', {
+        cx: x(p.i), cy: y(p.s[spec.key]), r: '2', fill: spec.color,
+      }, [svgEl('title', {}, [
+        new Date(p.s.at).toLocaleTimeString() + ' · ' + spec.label + ': ' +
+        p.s[spec.key].toFixed(1) + (unit === 'ms' ? ' ms' : ' ' + unit),
+      ])]));
+    }
+  }
+  if (samples.length) {
+    children.push(svgEl('text', {
+      x: left, y: height - 6, fill: '#8b93a3', 'font-size': '10',
+    }, [new Date(samples[0].at).toLocaleTimeString()]));
+    const last = samples[samples.length - 1];
+    children.push(svgEl('text', {
+      x: width - right, y: height - 6, 'text-anchor': 'end',
+      fill: '#8b93a3', 'font-size': '10',
+    }, [new Date(last.at).toLocaleTimeString()]));
+  }
+  return svgEl('svg', { viewBox: '0 0 ' + width + ' ' + height, class: 'chart-svg' }, children);
+}
+
+function chartBlock(title, samples, specs, unit) {
+  const legend = el('div', { class: 'legend' }, specs.map((spec) =>
+    el('span', { class: 'muted' }, [
+      el('i', { class: 'swatch', style: 'background:' + spec.color }),
+      spec.label,
+    ])));
+  return el('div', { class: 'chart' }, [el('h4', { text: title }), legend,
+    lineChart(samples, specs, unit)]);
+}
+
+function connectionTable(m) {
+  const conns = m.connections || [];
+  if (!conns.length) return el('p', { class: 'muted', text: 'No per-connection samples yet.' });
+  const rows = conns.map((c) => {
+    const mode = pickPerfMode(c);
+    return [
+      c.connection,
+      String(c.attempts),
+      String(c.successes),
+      fmtMs(mode.avg_ttft_ms),
+      fmtMs(mode.avg_latency_ms),
+      tpsCell(mode),
+      perfModes(c),
+      c.last_seen ? new Date(c.last_seen).toLocaleTimeString() : '—',
+    ];
+  });
+  return table(
+    ['connection', 'requests', 'ok', 'TTFT', 'latency', 'TPS', 'mode', 'last seen'],
+    rows,
+  );
+}
+
 // renderPerformance shows the last N attempts per advertised model. Stream and
 // non-stream samples are averaged separately; the row prefers the stream values
 // and labels a non-stream TPS as estimated (it is tokens/latency, not TPS).
+// Clicking a row opens the time-series charts and the per-connection breakdown.
 async function renderPerformance() {
   const host = el('div');
   const meta = el('span', { class: 'muted' });
+  const expanded = new Set();
+  let payload = null;
+  let rows = [];
+
+  function draw() {
+    const tbody = el('tbody');
+    for (const row of rows) {
+      const key = row.provider + '/' + row.model;
+      const open = expanded.has(key);
+      const caret = el('span', { class: 'caret', text: open ? '▾' : '▸' });
+      const tr = el('tr', { class: 'perf-row' });
+      tr.appendChild(el('td', {}, [caret, document.createTextNode(' ' + key)]));
+      for (const cell of row.cells.slice(1)) tr.appendChild(el('td', {}, [cell]));
+      tr.addEventListener('click', () => {
+        if (expanded.has(key)) expanded.delete(key);
+        else expanded.add(key);
+        draw();
+      });
+      tbody.appendChild(tr);
+      if (open) {
+        const details = el('div', { class: 'perf-detail' });
+        details.append(
+          el('div', { class: 'charts' }, [
+            chartBlock('TTFT & latency (ms)', row.series, [
+              { key: 'ttft_ms', label: 'TTFT', color: '#7ec699' },
+              { key: 'latency_ms', label: 'latency', color: '#6ea8fe' },
+            ], 'ms'),
+            chartBlock('TPS (tokens/s)', row.series, [
+              { key: 'tps', label: 'TPS', color: '#e0af68' },
+            ], 'tokens/s'),
+          ]),
+          el('h4', { text: 'By connection' }),
+          connectionTable(row.source),
+        );
+        tbody.appendChild(el('tr', { class: 'perf-detail-row' }, [
+          el('td', { colspan: '9' }, [details]),
+        ]));
+      }
+    }
+
+    const head = el('thead', {}, [el('tr', {}, [
+      'model', 'requests', 'ok', 'TTFT', 'latency', 'TPS', 'TPS trend',
+      'mode', 'last seen',
+    ].map((h) => el('th', { text: h })))]);
+    host.replaceChildren(el('table', {}, [head, tbody]));
+    if (payload && payload.data.every((m) => m.attempts === 0)) {
+      host.appendChild(el('p', { class: 'muted', text: 'No samples yet — send a request to a model.' }));
+    }
+  }
 
   async function load() {
     try {
-      const payload = await api('/api/performance');
-      const rows = payload.data.map((m) => {
-        // Prefer a mode with a usable TPS; otherwise fall back to whichever
-        // mode has samples so TTFT/latency still render.
-        const hasTps = (s) => s.avg_tps !== null && s.avg_tps !== undefined;
-        const mode = hasTps(m.stream) ? m.stream
-          : hasTps(m.non_stream) ? m.non_stream
-          : m.stream.samples > 0 ? m.stream : m.non_stream;
-        const modes = [];
-        if (m.stream.samples > 0) modes.push('stream ' + m.stream.samples);
-        if (m.non_stream.samples > 0) modes.push('non-stream ' + m.non_stream.samples);
+      payload = await api('/api/performance?series=1');
+      rows = payload.data.map((m) => {
+        const mode = pickPerfMode(m);
         return {
+          provider: m.provider,
+          model: m.model,
+          source: m,
+          series: m.series || [],
           tps: mode.avg_tps === null || mode.avg_tps === undefined ? -1 : mode.avg_tps,
           cells: [
             m.provider + '/' + m.model,
@@ -326,23 +559,19 @@ async function renderPerformance() {
             String(m.successes),
             fmtMs(mode.avg_ttft_ms),
             fmtMs(mode.avg_latency_ms),
-            fmtTps(mode),
-            modes.length ? modes.join(' · ') : '—',
+            tpsCell(mode),
+            sparkline(m.series || [], 'tps'),
+            perfModes(m),
             m.last_seen ? new Date(m.last_seen).toLocaleTimeString() : '—',
           ],
         };
       });
       rows.sort((a, b) => b.tps - a.tps ||
-        (a.cells[0] < b.cells[0] ? -1 : a.cells[0] > b.cells[0] ? 1 : 0));
-      host.replaceChildren(table(
-        ['model', 'requests', 'ok', 'TTFT', 'latency', 'TPS', 'mode', 'last seen'],
-        rows.map((r) => r.cells),
-      ));
-      if (payload.data.every((m) => m.attempts === 0)) {
-        host.appendChild(el('p', { class: 'muted', text: 'No samples yet — send a request to a model.' }));
-      }
-      meta.textContent = 'window: last ' + payload.window + ' attempts · updated ' +
-        new Date().toLocaleTimeString();
+        (a.provider + '/' + a.model < b.provider + '/' + b.model ? -1
+          : a.provider + '/' + a.model > b.provider + '/' + b.model ? 1 : 0));
+      draw();
+      meta.textContent = 'window: last ' + payload.window + ' attempts · low sample < ' +
+        payload.low_sample_at + ' · updated ' + new Date().toLocaleTimeString();
     } catch (err) {
       host.replaceChildren(el('p', { class: 'error', text: err.message }));
       setStatus(err.message, 'error');
@@ -359,7 +588,7 @@ async function renderPerformance() {
     el('h2', { text: 'Performance' }),
     el('div', { class: 'toolbar' }, [
       meta,
-      el('span', { class: 'muted', text: 'last N attempts per model; est. = tokens/latency; refresh 5 s' }),
+      el('span', { class: 'muted', text: 'last N attempts per model; est. = tokens/latency; click a row for charts; refresh 5 s' }),
     ]),
     host,
   );

@@ -12,17 +12,18 @@ import (
 )
 
 // recordAttempt stores one upstream attempt in the per-model performance
-// window. Failures keep their latency for the success rate but never enter the
+// window and, when a connection id is known, in that credential's window too.
+// Failures keep their latency for the success rate but never enter the
 // TTFT/latency/TPS averages.
-func (s *Server) recordAttempt(provider, model string, sample perf.Sample) {
+func (s *Server) recordAttempt(provider, model, connection string, sample perf.Sample) {
 	if s.Perf == nil || provider == "" || model == "" {
 		return
 	}
-	s.Perf.Record(provider, model, sample)
+	s.Perf.RecordConnection(provider, model, connection, sample)
 }
 
-func (s *Server) recordFailedAttempt(provider, model string, stream bool, latency time.Duration) {
-	s.recordAttempt(provider, model, perf.Sample{
+func (s *Server) recordFailedAttempt(provider, model, connection string, stream bool, latency time.Duration) {
+	s.recordAttempt(provider, model, connection, perf.Sample{
 		OK:      false,
 		Stream:  stream,
 		Latency: latency,
@@ -32,7 +33,7 @@ func (s *Server) recordFailedAttempt(provider, model string, stream bool, latenc
 // recordStreamAttempt commits a finished stream attempt. TPS uses the content
 // window (first token to last token); with a single content event that window
 // is zero, so it falls back to the whole latency and is marked estimated.
-func (s *Server) recordStreamAttempt(provider, model string, start time.Time, latency time.Duration, tap *perf.SSETap) {
+func (s *Server) recordStreamAttempt(provider, model, connection string, start time.Time, latency time.Duration, tap *perf.SSETap) {
 	sample := perf.Sample{
 		OK:      true,
 		Stream:  true,
@@ -58,24 +59,24 @@ func (s *Server) recordStreamAttempt(provider, model string, start time.Time, la
 	if sample.TTFT <= 0 {
 		sample.TTFT = latency
 	}
-	s.recordAttempt(provider, model, sample)
+	s.recordAttempt(provider, model, connection, sample)
 }
 
 // recordStreamResult decides whether a relay that already wrote bytes to the
 // client counts as a successful attempt. A stream cut in the middle is stored
 // as a failure with its partial latency, matching the success-rate definition.
-func (s *Server) recordStreamResult(provider, model string, start time.Time, tap *perf.SSETap, relayErr error) {
+func (s *Server) recordStreamResult(provider, model, connection string, start time.Time, tap *perf.SSETap, relayErr error) {
 	latency := time.Since(start)
 	if relayErr != nil {
-		s.recordFailedAttempt(provider, model, true, latency)
+		s.recordFailedAttempt(provider, model, connection, true, latency)
 		return
 	}
-	s.recordStreamAttempt(provider, model, start, latency, tap)
+	s.recordStreamAttempt(provider, model, connection, start, latency, tap)
 }
 
 // recordNonStreamAttempt commits a finished JSON response. There is no
 // first-token signal, so TTFT equals latency and TPS is marked estimated.
-func (s *Server) recordNonStreamAttempt(provider, model string, latency time.Duration, usage translate.Usage) {
+func (s *Server) recordNonStreamAttempt(provider, model, connection string, latency time.Duration, usage translate.Usage) {
 	sample := perf.Sample{
 		OK:           true,
 		Stream:       false,
@@ -88,7 +89,7 @@ func (s *Server) recordNonStreamAttempt(provider, model string, latency time.Dur
 	if sample.TokensKnown && latency > 0 {
 		sample.TPS = float64(usage.CompletionTokens) / latency.Seconds()
 	}
-	s.recordAttempt(provider, model, sample)
+	s.recordAttempt(provider, model, connection, sample)
 }
 
 // --- admin API ---------------------------------------------------------------
@@ -100,6 +101,33 @@ type perfModeDTO struct {
 	AvgTPS       *float64 `json:"avg_tps"`
 	TokensKnown  bool     `json:"tokens_known"`
 	TPSEstimated bool     `json:"tps_estimated"`
+	// LowSample warns that the average comes from fewer than
+	// perf.LowSampleThreshold successes.
+	LowSample bool `json:"low_sample"`
+}
+
+type perfConnectionDTO struct {
+	Connection string      `json:"connection"`
+	Attempts   int         `json:"attempts"`
+	Successes  int         `json:"successes"`
+	Failures   int         `json:"failures"`
+	LastSeen   *time.Time  `json:"last_seen"`
+	Stream     perfModeDTO `json:"stream"`
+	NonStream  perfModeDTO `json:"non_stream"`
+}
+
+// perfSampleDTO is one point in the time-series view. Failures are included so
+// the chart can mark them; their TTFT/TPS are null because no content arrived.
+type perfSampleDTO struct {
+	At           time.Time `json:"at"`
+	OK           bool      `json:"ok"`
+	Stream       bool      `json:"stream"`
+	TTFTMS       *float64  `json:"ttft_ms"`
+	LatencyMS    float64   `json:"latency_ms"`
+	TPS          *float64  `json:"tps"`
+	TPSEstimated bool      `json:"tps_estimated,omitempty"`
+	Tokens       int       `json:"tokens,omitempty"`
+	TokensKnown  bool      `json:"tokens_known"`
 }
 
 type perfModelDTO struct {
@@ -112,6 +140,11 @@ type perfModelDTO struct {
 	LastSeen  *time.Time  `json:"last_seen"`
 	Stream    perfModeDTO `json:"stream"`
 	NonStream perfModeDTO `json:"non_stream"`
+	// Connections is the per-credential breakdown for this model. It is empty
+	// when only model-level samples exist.
+	Connections []perfConnectionDTO `json:"connections,omitempty"`
+	// Series is present only with ?series=1, keeping the default payload small.
+	Series []perfSampleDTO `json:"series,omitempty"`
 }
 
 // handleAdminPerformance serves GET /api/performance.
@@ -119,17 +152,23 @@ type perfModelDTO struct {
 // Every advertised model is returned, including one that has never served a
 // request (attempts: 0, values null), so the page can answer "what do I have"
 // as well as "how fast is it". Samples for models that are no longer in the
-// registry are dropped.
+// registry are dropped. Add ?series=1 for the ring samples used by the charts.
 func (s *Server) handleAdminPerformance(w http.ResponseWriter, r *http.Request) {
 	window := perf.DefaultWindow
 	byKey := make(map[string]perf.Aggregate)
+	connByKey := make(map[string][]perf.Aggregate)
 	if s.Perf != nil {
 		window = s.Perf.WindowSize()
 		for _, a := range s.Perf.Snapshot() {
 			byKey[a.Provider+"/"+a.Model] = a
 		}
+		for _, a := range s.Perf.SnapshotConnections() {
+			k := a.Provider + "/" + a.Model
+			connByKey[k] = append(connByKey[k], a)
+		}
 	}
 
+	wantSeries := r.URL.Query().Get("series") == "1"
 	filter := strings.TrimSpace(r.URL.Query().Get("provider"))
 	providers := s.Registry().Providers()
 	data := make([]perfModelDTO, 0, len(providers))
@@ -138,7 +177,15 @@ func (s *Server) handleAdminPerformance(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		for _, m := range p.Models {
-			data = append(data, buildPerfDTO(p.ID, m.ID, byKey[p.ID+"/"+m.ID]))
+			k := p.ID + "/" + m.ID
+			dto := buildPerfDTO(p.ID, m.ID, byKey[k])
+			for _, c := range connByKey[k] {
+				dto.Connections = append(dto.Connections, buildPerfConnectionDTO(c))
+			}
+			if wantSeries && s.Perf != nil {
+				dto.Series = buildPerfSeries(s.Perf.Series(p.ID, m.ID))
+			}
+			data = append(data, dto)
 		}
 	}
 	sort.SliceStable(data, func(i, j int) bool {
@@ -149,9 +196,10 @@ func (s *Server) handleAdminPerformance(w http.ResponseWriter, r *http.Request) 
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"object": "list",
-		"window": window,
-		"data":   data,
+		"object":        "list",
+		"window":        window,
+		"low_sample_at": perf.LowSampleThreshold,
+		"data":          data,
 	})
 }
 
@@ -173,11 +221,56 @@ func buildPerfDTO(provider, model string, a perf.Aggregate) perfModelDTO {
 	return dto
 }
 
+func buildPerfConnectionDTO(a perf.Aggregate) perfConnectionDTO {
+	dto := perfConnectionDTO{
+		Connection: a.Connection,
+		Attempts:   a.Attempts,
+		Successes:  a.Successes,
+		Failures:   a.Failures,
+		Stream:     buildPerfModeDTO(a.Stream),
+		NonStream:  buildPerfModeDTO(a.NonStream),
+	}
+	if !a.LastSeen.IsZero() {
+		seen := a.LastSeen.UTC()
+		dto.LastSeen = &seen
+	}
+	return dto
+}
+
+func buildPerfSeries(samples []perf.Sample) []perfSampleDTO {
+	if len(samples) == 0 {
+		return nil
+	}
+	out := make([]perfSampleDTO, 0, len(samples))
+	for _, s := range samples {
+		dto := perfSampleDTO{
+			At:           s.At.UTC(),
+			OK:           s.OK,
+			Stream:       s.Stream,
+			LatencyMS:    round1(float64(s.Latency) / float64(time.Millisecond)),
+			TPSEstimated: s.TPSEstimated,
+			Tokens:       s.Tokens,
+			TokensKnown:  s.TokensKnown,
+		}
+		if s.TTFT > 0 {
+			ttft := round1(float64(s.TTFT) / float64(time.Millisecond))
+			dto.TTFTMS = &ttft
+		}
+		if s.TPS > 0 {
+			tps := round1(s.TPS)
+			dto.TPS = &tps
+		}
+		out = append(out, dto)
+	}
+	return out
+}
+
 func buildPerfModeDTO(m perf.ModeStats) perfModeDTO {
 	dto := perfModeDTO{
 		Samples:      m.Samples,
 		TokensKnown:  m.TokensKnown,
 		TPSEstimated: m.TPSEstimated,
+		LowSample:    m.Samples > 0 && m.Samples < perf.LowSampleThreshold,
 	}
 	if m.Samples > 0 {
 		ttft := round1(float64(m.AvgTTFT) / float64(time.Millisecond))

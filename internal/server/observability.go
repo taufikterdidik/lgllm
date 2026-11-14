@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"lgllm/internal/metrics"
 	"lgllm/internal/pricing"
 	"lgllm/internal/usagelog"
 )
@@ -18,8 +19,15 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	log := LoggerFrom(r.Context())
 	if err := s.Metrics.Render(w); err != nil {
-		LoggerFrom(r.Context()).Warn("rendering metrics failed", "err", err)
+		log.Warn("rendering metrics failed", "err", err)
+		return
+	}
+	if s.Perf != nil {
+		if err := metrics.WritePerformanceGauges(w, s.Perf.Snapshot()); err != nil {
+			log.Warn("rendering performance gauges failed", "err", err)
+		}
 	}
 }
 

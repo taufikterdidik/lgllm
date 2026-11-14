@@ -1,7 +1,7 @@
 // Package metrics keeps the counters exposed at GET /metrics.
 //
 // It implements the small subset of the Prometheus text format lgllm needs
-// (counters, one gauge, one histogram) rather than pulling in a client library:
+// (counters, gauges, one histogram) rather than pulling in a client library:
 // the process is meant to stay a single dependency-light binary.
 package metrics
 

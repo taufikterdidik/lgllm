@@ -36,6 +36,12 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 	if !strings.Contains(js.Body.String(), "/api/performance") {
 		t.Error("app.js does not call the performance endpoint")
 	}
+	if !strings.Contains(js.Body.String(), "/api/performance?series=1") {
+		t.Error("app.js does not request the performance time series")
+	}
+	if !strings.Contains(js.Body.String(), "low_sample") || !strings.Contains(js.Body.String(), "connections") {
+		t.Error("app.js does not render the low-sample and per-connection fields")
+	}
 	if !strings.Contains(page.Body.String(), `data-tab="performance"`) {
 		t.Error("index does not have a performance tab")
 	}

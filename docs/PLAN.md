@@ -999,6 +999,10 @@ rate tetapi tidak menggeser rata-rata performa.
 - **Sampling overhead.** Tap membaca dan mem-parse setiap event SSE; belum diukur
   dampaknya pada throughput stream yang sangat besar.
 
+> Fase 16 menutup tiga item di atas: gauge Prometheus, grafik/ambang sampel, dan
+> breakdown per-connection. Persistensi, token stream, alias/combo, dan
+> pengukuran overhead masih terbuka.
+
 ### 13. Config CLI (`lgllm config`)
 
 Tujuan: mengatur `config.yaml` tanpa server berjalan dan tanpa editor teks,
@@ -1205,6 +1209,77 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 16. Dashboard performa lanjutan — ✅ SELESAI
+
+> Status: fase 12 diperluas tanpa dependensi baru. `GET /api/performance`
+> sekarang mengembalikan `connections`, `low_sample`, dan (dengan `?series=1`)
+> titik time-series. UI menampilkan sparkline TPS, grafik TTFT/latency/TPS saat
+> baris diklik, serta tabel per connection. `/metrics` mengekspos gauge
+> `lgllm_model_ttft_seconds`, `lgllm_model_tps`, dan
+> `lgllm_model_requests_window`.
+
+### 16a. Keputusan implementasi — ✅ SELESAI
+
+- **Dua ring, satu attempt.** `perf.Registry` tetap menyimpan ring model
+  (jendela “N attempt terakhir” untuk tabel utama) dan menambahkan ring per
+  `provider/model/connection`. `RecordConnection` menulis ke keduanya;
+  `Record` lama tetap ada untuk pemanggil yang hanya butuh agregat model.
+  Ring connection juga dibatasi N, jadi biaya memori tetap
+  `model × N + connection × N`.
+- **Breakdown per connection bersifat opsional.** `SnapshotConnections`
+  mengembalikan `Aggregate.Connection`. API menempelkannya ke model sebagai
+  `connections`; model yang hanya punya sampel tanpa label connection tidak
+  mendapat baris palsu. Connection utama tetap menampilkan statistik model
+  gabungan, bukan salah satu akun saja.
+- **Series opt-in.** `GET /api/performance?series=1` menambahkan array `series`
+  berisi sampel ring (lama → baru), termasuk kegagalan. Payload default tetap
+  ringkas karena halaman lain dan klien API tidak butuh titik grafik.
+  Setiap titik membawa `at`, `ok`, `stream`, `ttft_ms`, `latency_ms`, `tps`,
+  `tps_estimated`, `tokens`, dan `tokens_known`; nilai timing `null` untuk
+  attempt yang gagal.
+- **Low sample.** Ambangnya konstanta `perf.LowSampleThreshold = 3`. Mode
+  dengan 1–2 success ditandai `low_sample: true`; API juga mengirim
+  `low_sample_at` agar UI tidak menebak ambang. Rata-rata tetap ditampilkan,
+  hanya diberi badge `low`, bukan disembunyikan.
+- **Grafik tanpa library.** UI memakai SVG inline: sparkline TPS di tabel dan
+  dua grafik waktu (TTFT + latency, lalu TPS) di baris detail. Garis putus-putus
+  merah menandai attempt gagal. Tidak ada canvas, chart library, atau langkah
+  build; CSP tetap `default-src 'self'`.
+- **Tabel per connection.** Baris detail memuat connection, attempts, success,
+  TTFT, latency, TPS, mode, dan last seen. Klik baris membuka/menutup detail;
+  auto-refresh 5 detik tetap mempertahankan baris yang sedang terbuka.
+- **Gauge Prometheus.** `internal/metrics.WritePerformanceGauges` merender dari
+  snapshot ring saat scrape, bukan menyimpan state kedua. Gauge TTFT/TPS memakai
+  label `provider`, `model`, `mode` (`stream`/`non_stream`); requests hanya
+  `provider`, `model`. Mode tanpa success tidak mengeluarkan gauge TTFT/TPS.
+- **Verifikasi.** Test baru mencakup pemisahan ring connection, urutan series,
+  `low_sample`, `connections` di API, `?series=1` opt-in, dan gauge di
+  `/metrics`; test UI statis memastikan endpoint series dan label baru dipakai.
+  `make check` dan `go test -race ./...` bersih.
+
+### 16b. Belum masuk fase 16
+
+- **Persentil.** Grafik dan tabel masih memakai rata-rata; belum ada p50/p95/p99
+  atau histogram per model di dashboard.
+- **Riwayat panjang.** Series hanya berisi maksimal N attempt terakhir di memori;
+  belum ada SQLite/rollup per jam atau per hari.
+- **Ambang low sample yang dapat dikonfigurasi.** Nilai 3 masih konstanta kode,
+  belum field `metrics.*`.
+- **Baris per connection di tabel utama.** Breakdown hanya muncul di detail;
+  belum ada tampilan datar `provider/model/connection` atau filter per akun.
+- **Agregat alias dan combo.** Baris tetap mengikuti model upstream; alias/combo
+  belum mendapat ring sendiri.
+- **Alerting.** Belum ada ambang error rate/TTFT yang memicu peringatan; gauge
+  hanya untuk scrape eksternal.
+- **TPS non-stream eksak.** Tetap `tokens/latency` dan ditandai `est.` karena
+  respons JSON tidak punya sinyal token pertama.
+- **Token stream di usage log.** Tap sudah membaca usage untuk performa, tetapi
+  entri usage request stream masih 0.
+- **Overhead sampling.** Pembacaan/parsing SSE per event belum diukur pada
+  throughput sangat besar.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1224,6 +1299,7 @@ jujur tanpa menambah lapisan routing baru.
 | 13 | Config CLI (provider, connection, sync model) | 2 hari | ✅ non-interaktif + wizard |
 | 14 | Builtin OpenCode Go + session header | 1 hari | ✅ `opencode-go` + `session_header` |
 | 15 | Builtin Command Code (chat + Claude) | 1 hari | ✅ `commandcode` + `commandcode-claude` |
+| 16 | Dashboard performa lanjutan | 1 hari | ✅ grafik, per-connection, gauge Prometheus |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

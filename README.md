@@ -442,6 +442,14 @@ reports no usage yields `n/a` rather than a guessed token count. The tap is
 read-only, so a passthrough stream stays byte-identical. The window is in-memory
 and resets on restart.
 
+The Performance tab also keeps a ring per connection, so one slow credential can
+be separated from a healthy one on the same provider. Click a row for the
+TTFT/latency and TPS time-series charts plus the per-connection table; a mode
+with fewer than three successes is marked `low`. `GET /api/performance` returns
+the same data (add `?series=1` for the chart points), and `/metrics` exposes
+`lgllm_model_ttft_seconds`, `lgllm_model_tps` and
+`lgllm_model_requests_window` with `provider`, `model` and `mode` labels.
+
 **Auth defaults to `localhost`.** Loopback clients are trusted so a locally
 installed CLI works with no setup; anything else must present a key. `auth.mode:
 off` is refused when the listener is not on loopback, because that would turn the

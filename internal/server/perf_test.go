@@ -66,6 +66,133 @@ func TestAdminPerformanceShowsWindowAndSplitsModes(t *testing.T) {
 	}
 }
 
+func TestAdminPerformanceConnectionBreakdownAndLowSample(t *testing.T) {
+	s, _, _ := newAdminTestServer(t, false)
+	s.Perf.RecordConnection("testprov", "test-model", "conn-a", perf.Sample{
+		OK: true, Stream: true, TTFT: 100 * time.Millisecond,
+		Latency: time.Second, Tokens: 20, TokensKnown: true, TPS: 20,
+	})
+	s.Perf.RecordConnection("testprov", "test-model", "conn-b", perf.Sample{
+		OK: false, Stream: true, Latency: 2 * time.Second,
+	})
+
+	res := do(s, adminRequest(http.MethodGet, "/api/performance", adminTestToken, ""))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	var body struct {
+		Data []perfModelDTO `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, res.Body)
+	}
+	if len(body.Data) != 1 {
+		t.Fatalf("data = %d rows, want 1", len(body.Data))
+	}
+	m := body.Data[0]
+	if m.Attempts != 2 || m.Successes != 1 || m.Failures != 1 {
+		t.Errorf("model totals = %d/%d/%d", m.Attempts, m.Successes, m.Failures)
+	}
+	if len(m.Connections) != 2 {
+		t.Fatalf("connections = %+v, want 2 rows", m.Connections)
+	}
+	byID := make(map[string]perfConnectionDTO, len(m.Connections))
+	for _, c := range m.Connections {
+		byID[c.Connection] = c
+	}
+	a, ok := byID["conn-a"]
+	if !ok {
+		t.Fatalf("conn-a missing from %+v", m.Connections)
+	}
+	if a.Attempts != 1 || a.Successes != 1 || a.Failures != 0 {
+		t.Errorf("conn-a totals = %d/%d/%d", a.Attempts, a.Successes, a.Failures)
+	}
+	if !a.Stream.LowSample || a.Stream.Samples != 1 {
+		t.Errorf("conn-a stream = %+v, want one low-sample success", a.Stream)
+	}
+	if b := byID["conn-b"]; b.Attempts != 1 || b.Failures != 1 {
+		t.Errorf("conn-b = %+v", b)
+	}
+	// A single successful sample also marks the model-level average as low.
+	if !m.Stream.LowSample {
+		t.Errorf("model stream = %+v, want low_sample", m.Stream)
+	}
+	if m.Stream.AvgTPS == nil || *m.Stream.AvgTPS != 20 {
+		t.Errorf("model stream tps = %v", m.Stream.AvgTPS)
+	}
+}
+
+func TestAdminPerformanceSeriesIsOptIn(t *testing.T) {
+	s, _, _ := newAdminTestServer(t, false)
+	base := time.Unix(4000, 0)
+	s.Perf.Record("testprov", "test-model", perf.Sample{
+		At: base, OK: true, Stream: true,
+		TTFT: 100 * time.Millisecond, Latency: time.Second,
+		Tokens: 20, TokensKnown: true, TPS: 20,
+	})
+	s.Perf.Record("testprov", "test-model", perf.Sample{
+		At: base.Add(time.Second), OK: false, Stream: true, Latency: 2 * time.Second,
+	})
+
+	plain := do(s, adminRequest(http.MethodGet, "/api/performance", adminTestToken, ""))
+	var plainBody struct {
+		Data []perfModelDTO `json:"data"`
+	}
+	if err := json.Unmarshal(plain.Body.Bytes(), &plainBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(plainBody.Data) != 1 || len(plainBody.Data[0].Series) != 0 {
+		t.Errorf("plain series = %+v, want omitted", plainBody.Data)
+	}
+
+	withSeries := do(s, adminRequest(http.MethodGet, "/api/performance?series=1", adminTestToken, ""))
+	if withSeries.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", withSeries.Code, withSeries.Body)
+	}
+	var body struct {
+		Data []perfModelDTO `json:"data"`
+	}
+	if err := json.Unmarshal(withSeries.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, withSeries.Body)
+	}
+	if len(body.Data) != 1 {
+		t.Fatalf("data = %d rows, want 1", len(body.Data))
+	}
+	series := body.Data[0].Series
+	if len(series) != 2 {
+		t.Fatalf("series = %+v, want 2 samples", series)
+	}
+	if !series[0].At.Equal(base) || !series[0].OK || series[0].TPS == nil || *series[0].TPS != 20 {
+		t.Errorf("first sample = %+v", series[0])
+	}
+	if series[1].OK || series[1].TPS != nil || series[1].TTFTMS != nil {
+		t.Errorf("failed sample = %+v, want null timings", series[1])
+	}
+}
+
+func TestMetricsExposePerformanceGauges(t *testing.T) {
+	s, _, _ := newAdminTestServer(t, false)
+	s.Perf.RecordConnection("testprov", "test-model", "conn-a", perf.Sample{
+		OK: true, Stream: true, TTFT: 250 * time.Millisecond,
+		Latency: 2 * time.Second, Tokens: 50, TokensKnown: true, TPS: 40,
+	})
+
+	res := do(s, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d", res.Code)
+	}
+	out := res.Body.String()
+	for _, want := range []string{
+		`lgllm_model_requests_window{provider="testprov",model="test-model"} 1`,
+		`lgllm_model_ttft_seconds{provider="testprov",model="test-model",mode="stream"} 0.25`,
+		`lgllm_model_tps{provider="testprov",model="test-model",mode="stream"} 40`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("metrics missing %q in:\n%s", want, out)
+		}
+	}
+}
+
 func TestAdminPerformanceListsAdvertisedModelsWithoutSamples(t *testing.T) {
 	s, _, _ := newAdminTestServer(t, false)
 	// A sample for a model that is not advertised must not leak into the list.
@@ -126,6 +253,10 @@ func TestPerformanceRecordsNonStreamAttempt(t *testing.T) {
 	}
 	if agg.NonStream.AvgTTFT <= 0 || agg.NonStream.AvgLatency <= 0 {
 		t.Errorf("non-stream timings = %v/%v", agg.NonStream.AvgTTFT, agg.NonStream.AvgLatency)
+	}
+	conns := s.Perf.SnapshotConnections()
+	if len(conns) != 1 || conns[0].Connection != "test-conn" || conns[0].Attempts != 1 {
+		t.Errorf("connection breakdown = %+v, want test-conn", conns)
 	}
 }
 

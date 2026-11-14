@@ -16,6 +16,11 @@ import (
 // config does not say otherwise.
 const DefaultWindow = 10
 
+// LowSampleThreshold is the number of samples below which an average is shown
+// with a "low sample" warning. Three is enough to make a wild first request
+// visible without hiding early numbers entirely.
+const LowSampleThreshold = 3
+
 // Sample is one finished attempt against one provider/model.
 //
 // A failed attempt keeps its latency so the success rate is honest, but it is
@@ -52,19 +57,28 @@ type ModeStats struct {
 // Aggregate is one model's window, split by mode because a streamed TPS and a
 // whole-response TPS are not comparable.
 type Aggregate struct {
-	Provider  string
-	Model     string
-	Attempts  int
-	Successes int
-	Failures  int
-	LastSeen  time.Time
-	Stream    ModeStats
-	NonStream ModeStats
+	Provider string
+	Model    string
+	// Connection is set only by SnapshotConnections; the model-level aggregate
+	// leaves it empty.
+	Connection string
+	Attempts   int
+	Successes  int
+	Failures   int
+	LastSeen   time.Time
+	Stream     ModeStats
+	NonStream  ModeStats
 }
 
 type key struct {
 	provider string
 	model    string
+}
+
+type connKey struct {
+	provider   string
+	model      string
+	connection string
 }
 
 type window struct {
@@ -99,6 +113,10 @@ type Registry struct {
 	mu      sync.Mutex
 	size    int
 	windows map[key]*window
+	// conns keeps a second ring per credential. The model-level window stays
+	// the authoritative "last N attempts" for the main table; the connection
+	// rings let the detail view separate one slow account from another.
+	conns map[connKey]*window
 }
 
 // New returns a registry keeping window samples per provider/model. A
@@ -110,6 +128,7 @@ func New(windowSize int) *Registry {
 	return &Registry{
 		size:    windowSize,
 		windows: make(map[key]*window),
+		conns:   make(map[connKey]*window),
 	}
 }
 
@@ -121,9 +140,16 @@ func (r *Registry) WindowSize() int {
 	return r.size
 }
 
-// Record adds one attempt. At is filled with the current time when zero, which
-// lets callers omit it.
+// Record adds one attempt without a connection label. It is kept for callers
+// that only care about the model aggregate (and for tests).
 func (r *Registry) Record(provider, model string, s Sample) {
+	r.RecordConnection(provider, model, "", s)
+}
+
+// RecordConnection adds one attempt and, when connection is non-empty, also
+// updates that credential's ring. At is filled with the current time when zero,
+// which lets callers omit it.
+func (r *Registry) RecordConnection(provider, model, connection string, s Sample) {
 	if r == nil || provider == "" || model == "" {
 		return
 	}
@@ -138,7 +164,31 @@ func (r *Registry) Record(provider, model string, s Sample) {
 		r.windows[k] = w
 	}
 	w.add(s)
+	if connection != "" {
+		ck := connKey{provider: provider, model: model, connection: connection}
+		cw := r.conns[ck]
+		if cw == nil {
+			cw = &window{size: r.size}
+			r.conns[ck] = cw
+		}
+		cw.add(s)
+	}
 	r.mu.Unlock()
+}
+
+// Series returns the model's samples oldest-first, including failures. It is
+// used by the admin API when the UI asks for a time-series chart.
+func (r *Registry) Series(provider, model string) []Sample {
+	if r == nil || provider == "" || model == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w := r.windows[key{provider: provider, model: model}]
+	if w == nil {
+		return nil
+	}
+	return w.snapshot()
 }
 
 // Snapshot returns every model's aggregate, sorted by provider then model.
@@ -153,13 +203,45 @@ func (r *Registry) Snapshot() []Aggregate {
 	}
 	r.mu.Unlock()
 
+	sortAggregates(out)
+	return out
+}
+
+// SnapshotConnections returns one aggregate per provider/model/connection,
+// sorted by provider, model then connection. A caller that recorded only with
+// Record gets no connection rows, because no credential label was available.
+func (r *Registry) SnapshotConnections() []Aggregate {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	out := make([]Aggregate, 0, len(r.conns))
+	for ck, w := range r.conns {
+		a := aggregate(key{provider: ck.provider, model: ck.model}, w.snapshot())
+		a.Connection = ck.connection
+		out = append(out, a)
+	}
+	r.mu.Unlock()
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Provider != out[j].Provider {
+			return out[i].Provider < out[j].Provider
+		}
+		if out[i].Model != out[j].Model {
+			return out[i].Model < out[j].Model
+		}
+		return out[i].Connection < out[j].Connection
+	})
+	return out
+}
+
+func sortAggregates(out []Aggregate) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Provider != out[j].Provider {
 			return out[i].Provider < out[j].Provider
 		}
 		return out[i].Model < out[j].Model
 	})
-	return out
 }
 
 func aggregate(k key, samples []Sample) Aggregate {
