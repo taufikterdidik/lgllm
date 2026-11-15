@@ -1339,6 +1339,50 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 18. Endpoint detail model — ✅ SELESAI
+
+> Status: `GET /v1/models/{model...}` dan alias `GET /api/v1/models/{model...}`
+> mengembalikan satu objek model OpenAI. Path memakai trailing wildcard karena
+> id provider-prefixed dan id gaya OpenRouter mengandung slash.
+
+### 18a. Keputusan implementasi — ✅ SELESAI
+
+- **Wildcard, bukan satu segmen.** Route `GET /v1/models/{model...}` menangkap
+  seluruh sisa path, jadi `cmd/deepseek/deepseek-v4.1-flash` dan
+  `ocg/deepseek-v4.1-flash` sampai utuh. `/v1/models` tetap menjadi daftar.
+- **Resolusi lewat registry.** Handler memakai `Registry.Lookup`, jadi detail
+  bekerja untuk id provider/model, alias, combo, dan bare model yang dirutekan
+  `default_provider`. Id yang dikembalikan adalah id yang diminta, bukan hasil
+  normalisasi, agar client yang menyimpan nilai dari path tidak kaget.
+- **`owned_by`.** Provider asli untuk model/alias, dan `"combo"` untuk combo.
+  Field lain tetap bentuk OpenAI: `object: "model"`, `created: 0`.
+- **404 jujur.** Nama yang tidak bisa dirutekan mendapat JSON 404
+  `model "..." not found`; path kosong juga 404. Model di luar daftar hint tetap
+  boleh selama provider prefix/default-nya valid, konsisten dengan prinsip
+  "model list adalah hint, bukan allow-list".
+- **Alias path.** `/api/v1/models/{model...}` memakai handler yang sama, jadi
+  payload tidak bisa berbeda dari `/v1/models/{model...}`.
+- **Root discovery.** `GET /` mencantumkan kedua endpoint detail.
+- **Verifikasi.** Test mencakup model dengan slash, alias, alias path API,
+  unknown provider, dan bentuk JSON. `make check` dan `go test -race ./...`
+  bersih.
+
+### 18b. Belum masuk fase 18
+
+- **Metadata detail.** Belum ada `context_window`, `capabilities`, atau harga di
+  objek model; field tersebut masih hanya di config dan endpoint kompatibilitas
+  lain.
+- **Detail dari upstream.** Endpoint dijawab dari registry lokal; belum
+  memanggil `GET /models/{id}` upstream untuk metadata live.
+- **Cache dan ETag.** Belum ada cache atau `ETag`; setiap request membaca
+  snapshot registry in-memory.
+- **Model yang tidak advertised.** Detail tetap mengembalikan model yang tidak
+  ada di daftar hint selama provider prefix/default valid.
+- **Bentuk Ollama/llama.cpp.** Detail model tetap memakai bentuk OpenAI; jalur
+  Ollama tetap lewat `/api/show`.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1360,6 +1404,7 @@ jujur tanpa menambah lapisan routing baru.
 | 15 | Builtin Command Code (chat + Claude) | 1 hari | ✅ `commandcode` + `commandcode-claude` |
 | 16 | Dashboard performa lanjutan | 1 hari | ✅ grafik, per-connection, gauge Prometheus |
 | 17 | Stream cancel setelah finish | 0,5 hari | ✅ abort client tidak dihitung gagal + counter |
+| 18 | Endpoint detail model | 0,5 hari | ✅ `GET /v1/models/{model...}` |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

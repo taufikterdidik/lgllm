@@ -48,6 +48,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /usage", s.handleUsage)
 
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
+	s.mux.HandleFunc("GET /v1/models/{model...}", s.handleModel)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	s.mux.HandleFunc("POST /v1/messages", s.handleAnthropicMessages)
 
@@ -56,6 +57,7 @@ func (s *Server) routes() {
 	// /api/v1/models is a pure alias — the same handler serves both paths, so
 	// the two payloads cannot drift apart.
 	s.mux.HandleFunc("GET /api/v1/models", s.handleModels)
+	s.mux.HandleFunc("GET /api/v1/models/{model...}", s.handleModel)
 	s.mux.HandleFunc("GET /api/tags", s.handleAPITags) // Ollama model list
 	s.mux.HandleFunc("GET /api/show", s.handleAPIShow) // Ollama model details
 	s.mux.HandleFunc("POST /api/show", s.handleAPIShow)
@@ -123,7 +125,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"GET /api/performance (admin)",
 			"GET /ui/ (admin)",
 			"GET /v1/models",
+			"GET /v1/models/{model}",
 			"GET /api/v1/models",
+			"GET /api/v1/models/{model}",
 			"GET /api/tags",
 			"GET,POST /api/show",
 			"GET /v1/props",

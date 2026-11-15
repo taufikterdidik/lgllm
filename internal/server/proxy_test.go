@@ -285,6 +285,60 @@ func TestModelsListsAliasPrefixedIDs(t *testing.T) {
 	}
 }
 
+func TestModelDetailReturnsRoutableModel(t *testing.T) {
+	cfg := testConfig(t, func(c *config.Config) {
+		c.Providers[0].Alias = "tp"
+		c.Providers[0].Models = []config.Model{{ID: "vendor/model"}}
+		c.Aliases = map[string]string{"fast": "testprov/vendor/model"}
+	})
+	s := newTestServer(t, cfg, nil)
+
+	for _, path := range []string{
+		"/v1/models/tp/vendor/model",
+		"/api/v1/models/tp/vendor/model",
+		"/v1/models/fast",
+	} {
+		res := do(s, httptest.NewRequest(http.MethodGet, path, nil))
+		if res.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body = %s", path, res.Code, res.Body)
+		}
+		var got modelObject
+		if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s body is not JSON: %v", path, err)
+		}
+		if got.Object != "model" || got.ID == "" {
+			t.Errorf("%s = %+v", path, got)
+		}
+		if got.OwnedBy != "testprov" {
+			t.Errorf("%s owned_by = %q", path, got.OwnedBy)
+		}
+	}
+}
+
+func TestModelDetailUnknownProviderIs404(t *testing.T) {
+	cfg := testConfig(t, func(c *config.Config) {
+		c.DefaultProvider = ""
+		c.Providers = append(c.Providers, config.Provider{
+			ID: "other", BaseURL: "https://other.invalid/v1", Format: "openai", Auth: "bearer",
+			Models: []config.Model{{ID: "test-model"}},
+		})
+		c.Connections = append(c.Connections, config.Connection{
+			ID: "other-conn", Provider: "other", APIKey: "sk-other",
+		})
+	})
+	s := newTestServer(t, cfg, nil)
+	res := do(s, httptest.NewRequest(http.MethodGet, "/v1/models/nope/model", nil))
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	if ct := res.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if !strings.Contains(res.Body.String(), "not found") {
+		t.Errorf("body = %s", res.Body)
+	}
+}
+
 func TestModelsIsEmptyWithoutProviders(t *testing.T) {
 	cfg := testConfig(t, func(c *config.Config) {
 		c.Providers = nil

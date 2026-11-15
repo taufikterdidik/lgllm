@@ -3,6 +3,7 @@ package server
 import (
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"lgllm/internal/registry"
@@ -173,5 +174,39 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"object": "list",
 		"data":   data,
+	})
+}
+
+// handleModel serves GET /v1/models/{model...}.
+//
+// The wildcard is intentionally a trailing wildcard: provider-prefixed ids and
+// OpenRouter-style ids both contain slashes ("cmd/deepseek/deepseek-v4.1-flash",
+// "ds/deepseek-ai/DeepSeek-V3"). The path can also be an alias, a combo, or a
+// bare model routed by default, because every one of those works as a request's
+// "model". The response echoes the requested id so a client that stores the
+// value it asked for does not get a surprise prefix swap.
+func (s *Server) handleModel(w http.ResponseWriter, r *http.Request) {
+	requested := strings.Trim(strings.TrimSpace(r.PathValue("model")), "/")
+	if requested == "" {
+		writeJSONError(w, http.StatusNotFound, "model is required", "not_found")
+		return
+	}
+
+	reg := s.Registry()
+	target, err := reg.Lookup(requested)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, "model "+strconv.Quote(requested)+" not found", "not_found")
+		return
+	}
+
+	ownedBy := target.Provider.ID
+	if target.Combo != "" {
+		ownedBy = "combo"
+	}
+	writeJSON(w, http.StatusOK, modelObject{
+		ID:      requested,
+		Object:  "model",
+		Created: 0,
+		OwnedBy: ownedBy,
 	})
 }

@@ -166,12 +166,19 @@ same registry, so a model name taken from them works unchanged in
 | Endpoint | Shape |
 |---|---|
 | `GET /api/v1/models` | identical to `GET /v1/models` (pure alias) |
+| `GET /v1/models/{model}` | OpenAI model object for a routable id, alias, or combo; `{model}` may contain slashes |
+| `GET /api/v1/models/{model}` | identical to `GET /v1/models/{model}` |
 | `GET /api/tags` | Ollama `ListResponse`: `{"models":[{name, model, modified_at, size, digest, details, capabilities}]}` |
 | `GET,POST /api/show` | Ollama `ShowResponse`; body `{"model":"..."}` or `?model=` |
 | `GET /v1/props` | llama.cpp `/props`: `model_alias`, `n_ctx`, `modalities`, `build_info` |
 
 `/props` is registered as well, so a llama.cpp client that hard-codes the native
 path works without a rewrite.
+
+The model-detail wildcard echoes the id that was requested and accepts the same
+names as generation: provider-prefixed ids, aliases, combos, and bare names
+routed by `default_provider`. Model lists remain hints rather than an allow-list,
+so an unlisted `provider/model` still resolves.
 
 They describe models; they never run one. Generation goes through
 `/v1/chat/completions`, `/v1/messages`, or the provider's native generation
