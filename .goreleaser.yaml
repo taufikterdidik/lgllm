@@ -8,7 +8,9 @@ project_name: lgllm
 
 before:
   hooks:
-    - go mod tidy
+    # Verify the module cache instead of rewriting go.mod/go.sum during a
+    # release; a dirty tree after this hook is a release blocker.
+    - go mod verify
 
 builds:
   - id: lgllm
@@ -38,13 +40,20 @@ archives:
       - goos: windows
         formats: [zip]
     files:
+      - LICENSE
       - README.md
       - config.example.yaml
       - docs/PLAN.md
+      - docs/BENCH.md
       - deploy/lgllm.service
 
 checksum:
   name_template: checksums.txt
+
+release:
+  # The tag workflow creates a draft first. Re-running a failed release should
+  # replace that draft instead of failing on an existing release.
+  replace_existing_draft: true
 
 changelog:
   sort: asc
@@ -58,12 +67,13 @@ nfpms:
   - id: packages
     package_name: lgllm
     vendor: lgllm
-    homepage: https://github.com/taufik/lgllm
+    homepage: https://github.com/taufikterdidik/lgllm
     maintainer: taufik <mr@taufik.my.id>
     description: |-
       Lightweight OpenAI/Anthropic-compatible LLM proxy with provider
       fallback, format translation and a token saver.
     license: MIT
+    bindir: /usr/bin
     formats:
       - deb
       - rpm
@@ -85,7 +95,7 @@ nfpms:
 #       owner: taufik
 #       name: homebrew-lgllm
 #     directory: Formula
-#     homepage: https://github.com/taufik/lgllm
+#     homepage: https://github.com/taufikterdidik/lgllm
 #     description: Lightweight OpenAI/Anthropic-compatible LLM proxy
 #     license: MIT
 #     install: |

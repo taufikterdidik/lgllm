@@ -35,3 +35,20 @@ jobs:
 
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/lgllm
+
+      - name: GoReleaser config
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+
+      - name: GoReleaser snapshot
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean
+
+      - name: Docker build
+        run: docker build -t lgllm:ci .

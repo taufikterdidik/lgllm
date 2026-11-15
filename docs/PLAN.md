@@ -926,6 +926,10 @@ Rekomendasi: B dulu kalau targetnya personal/VPS, A kalau mau dipakai orang lain
 - **Homebrew/systemd di distro nyata.** Unit dan post-install belum diuji di
   Debian/Fedora/Alpine bersih.
 
+> Fase 19 menutup publikasi rilis, image multi-arch, SBOM/provenance, dan
+> signing image. Tap Homebrew, signing paket, dan uji distro bersih masih
+> terbuka.
+
 ---
 
 ## 12. Dashboard performa per model — ✅ SELESAI
@@ -1383,6 +1387,55 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 19. Proses rilis — ✅ SELESAI
+
+> Status: rilis pertama disiapkan end-to-end: `LICENSE`, metadata GoReleaser yang
+> benar, paket memasang binary di `/usr/bin/lgllm`, image multi-arch di GHCR,
+> workflow tag `v*`, draft release sebelum publish, checksum, SBOM/provenance,
+> dan signing image dengan cosign.
+
+### 19a. Keputusan implementasi — ✅ SELESAI
+
+- **Lisensi.** `LICENSE` MIT ditambahkan dan ikut masuk arsip rilis serta image.
+- **GoReleaser.** `before.hooks` memakai `go mod verify` (tidak menulis ulang
+  `go.mod`/`go.sum`), `bindir` eksplisit `/usr/bin`, homepage diperbaiki ke
+  `taufikterdidik/lgllm`, dan arsip memuat LICENSE, README, contoh config,
+  systemd unit, PLAN, serta BENCH.
+- **Paket Linux.** Binary deb/rpm/apk terpasang di `/usr/bin/lgllm`; unit
+  systemd dan instruksi post-install memakai path yang sama.
+- **Container.** Dockerfile multi-arch memakai `TARGETOS`/`TARGETARCH`, label OCI,
+  `HEALTHCHECK` lewat binary `-healthcheck`, dan CMD `-listen 0.0.0.0:20128`.
+  `.dockerignore` mencegah config lokal, admin overlay, `.git`, dan artefak build
+  masuk context.
+- **CI.** `ci.yml` menjalankan gofmt/vet/race/build, `goreleaser check`,
+  `goreleaser release --snapshot --clean`, dan `docker build`.
+- **Workflow rilis.** Tag `v*` menjalankan test gate, membuat arsip/paket sebagai
+  draft, membangun image amd64+arm64, menandatangani digest image, lalu
+  mempublikasikan release. Tag dengan `-` menjadi prerelease dan tidak memindahkan
+  `latest`.
+- **Dependency hygiene.** Dependabot mingguan untuk Go module dan GitHub Actions.
+- **Verifikasi.** `goreleaser check` dan snapshot lintas platform berhasil;
+  paket deb berisi `/usr/bin/lgllm` dan unit systemd; image 9.0 MB berjalan dan
+  `-version` bekerja; YAML workflow valid.
+
+### 19b. Belum masuk fase 19
+
+- **Tanda tangan checksum dan paket.** Image ditandatangani cosign; checksum dan
+  paket deb/rpm/apk belum ditandatangani.
+- **Homebrew tap.** Blok `brews` masih dikomentari sampai repository tap dibuat.
+- **Build macOS/Windows asli.** Cross-build dibuat, tetapi runtime macOS, Windows,
+  dan ARM belum diuji di CI.
+- **Uji instalasi distro bersih.** Paket belum diuji di Debian/Fedora/Alpine
+  bersih; unit systemd juga belum diuji di semua distro.
+- **Notarization/signing Windows.** Belum ada Authenticode atau notarization
+  Apple.
+- **Auto-update.** Belum ada pemeriksaan versi terbaru atau mekanisme upgrade.
+- **Soak/load test.** Rilis belum di-gate oleh uji beban jangka panjang.
+- **Publish manual pertama.** Tag pertama masih harus diputuskan operator
+  (mis. `v0.1.0`) dan workflow belum pernah dijalankan di GitHub nyata.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1405,6 +1458,7 @@ jujur tanpa menambah lapisan routing baru.
 | 16 | Dashboard performa lanjutan | 1 hari | ✅ grafik, per-connection, gauge Prometheus |
 | 17 | Stream cancel setelah finish | 0,5 hari | ✅ abort client tidak dihitung gagal + counter |
 | 18 | Endpoint detail model | 0,5 hari | ✅ `GET /v1/models/{model...}` |
+| 19 | Proses rilis | 1 hari | ✅ workflow tag → artifacts + image + release |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

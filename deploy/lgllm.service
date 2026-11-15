@@ -1,6 +1,6 @@
 [Unit]
 Description=lgllm LLM proxy
-Documentation=https://github.com/taufik/lgllm
+Documentation=https://github.com/taufikterdidik/lgllm
 After=network-online.target
 Wants=network-online.target
 
@@ -10,7 +10,7 @@ User=lgllm
 Group=lgllm
 # Configuration lives in /etc/lgllm/config.yaml; secrets can be supplied via the
 # environment file instead of being stored on disk.
-ExecStart=/usr/local/bin/lgllm -config /etc/lgllm/config.yaml
+ExecStart=/usr/bin/lgllm -config /etc/lgllm/config.yaml
 EnvironmentFile=-/etc/lgllm/env
 Restart=on-failure
 RestartSec=2s

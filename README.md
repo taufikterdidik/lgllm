@@ -4,14 +4,15 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–12 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–18 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
 per-key rate limits, an admin REST API with an embedded web UI, packaging
-benchmarks, and a per-model TTFT/latency/TPS dashboard. 9Router parity is not the
-goal; see [`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each
-phase deliberately leaves out.
+benchmarks, a per-model TTFT/latency/TPS dashboard, client-abort classification,
+and a model-detail endpoint. 9Router parity is not the goal; see
+[`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each phase
+deliberately leaves out.
 
 ## Why
 
@@ -42,11 +43,28 @@ make image-size            # scratch image, prints its size
 make bench                 # local size/start/RSS/latency/throughput numbers
 ```
 
+## Releases
+
+A pushed annotated tag such as `v0.1.0` starts
+[`.github/workflows/release.yml`](.github/workflows/release.yml). The workflow
+runs the test gate, builds archives and deb/rpm/apk packages with GoReleaser,
+builds a signed multi-arch `ghcr.io/taufikterdidik/lgllm` image, and publishes
+the GitHub release only after both artifact sets succeed. Pre-release tags such
+as `v0.2.0-rc.1` are marked as prereleases and do not move `latest`.
+
+Release artifacts include the static binaries, checksums, `LICENSE`, the example
+config, and the systemd unit. The container image runs as UID 65532 and uses
+`/lgllm -healthcheck` internally. The operator checklist is in
+[`docs/RELEASE.md`](docs/RELEASE.md).
+
 The Docker image is `scratch` + the static binary, CA certificates and tzdata:
-8.7 MB in the benchmark run. A systemd unit and package post-install script live
-in [`deploy/`](deploy/), and release archives are produced by
-[`.goreleaser.yaml`](.goreleaser.yaml) (deb/rpm/apk plus linux/darwin/windows
-amd64+arm64). Measured numbers and methodology: [`docs/BENCH.md`](docs/BENCH.md).
+9.0 MB in the release check. It listens on `0.0.0.0:20128` inside the container;
+publish it only on loopback or behind your own TLS/auth boundary, and set
+`auth.mode: required` before exposing it beyond localhost. A systemd unit and
+package post-install script live in [`deploy/`](deploy/), and release archives are
+produced by [`.goreleaser.yaml`](.goreleaser.yaml) (deb/rpm/apk plus
+linux/darwin/windows amd64+arm64). Measured numbers and methodology:
+[`docs/BENCH.md`](docs/BENCH.md).
 
 ```bash
 curl localhost:20128/healthz

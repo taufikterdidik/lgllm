@@ -1,0 +1,25 @@
+# Local build output
+/bin/
+/dist/
+
+# Local configuration and secrets
+/config.yaml
+/config.local.yaml
+*.local.yaml
+/admin.yaml
+/.env
+
+# Development state
+/.git/
+/.github/
+/.idea/
+/.vscode/
+/.brv/
+*.swp
+.DS_Store
+
+# Test and documentation artifacts not needed by the build
+*.test
+*.out
+coverage.*
+/output.log

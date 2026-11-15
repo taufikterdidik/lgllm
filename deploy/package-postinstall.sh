@@ -28,7 +28,7 @@ lgllm installed.
 Next steps:
   1. cp /etc/lgllm/config.example.yaml /etc/lgllm/config.yaml
   2. edit providers/connections (or set ${ENV} references in /etc/lgllm/env)
-  3. /usr/local/bin/lgllm -config /etc/lgllm/config.yaml -check
+  3. /usr/bin/lgllm -config /etc/lgllm/config.yaml -check
   4. systemctl enable --now lgllm
 
 If you enable the admin API, point admin.state_file at /var/lib/lgllm/admin.yaml.
