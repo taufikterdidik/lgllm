@@ -13,14 +13,23 @@ import (
 
 // TapStats is what an SSETap learned while a stream was relayed.
 type TapStats struct {
-	FirstContent     time.Time
-	LastContent      time.Time
+	FirstContent time.Time
+	LastContent  time.Time
+	// FinishedAt is set when the provider signals a terminal finish reason. A
+	// client may close right after that event, before the trailing usage chunk,
+	// so the server uses this to tell "finished, then client left" from a
+	// stream that was genuinely cut short.
+	FinishedAt       time.Time
+	FinishReason     string
 	PromptTokens     int
 	CompletionTokens int
 	// TokensKnown reports whether the provider sent a usage event. A provider
 	// that never reports usage yields n/a rather than an invented count.
 	TokensKnown bool
 }
+
+// SawFinish reports whether a terminal finish reason was observed.
+func (s TapStats) SawFinish() bool { return !s.FinishedAt.IsZero() }
 
 // ContentDuration is the time between the first and last content event. It is
 // the denominator of a streamed TPS; zero when the stream had one content
@@ -174,6 +183,15 @@ func (t *SSETap) markContent(at time.Time) {
 	}
 }
 
+func (t *SSETap) markFinish(at time.Time, reason string) {
+	if t.stats.FinishedAt.IsZero() {
+		t.stats.FinishedAt = at
+	}
+	if reason != "" {
+		t.stats.FinishReason = reason
+	}
+}
+
 func (t *SSETap) observeOpenAI(payload string, at time.Time) {
 	var ev struct {
 		Choices []struct {
@@ -183,6 +201,7 @@ func (t *SSETap) observeOpenAI(payload string, at time.Time) {
 				ToolCalls        []json.RawMessage `json:"tool_calls"`
 				FunctionCall     json.RawMessage   `json:"function_call"`
 			} `json:"delta"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage *struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -198,6 +217,9 @@ func (t *SSETap) observeOpenAI(payload string, at time.Time) {
 		t.stats.TokensKnown = true
 	}
 	for _, ch := range ev.Choices {
+		if ch.FinishReason != "" {
+			t.markFinish(at, ch.FinishReason)
+		}
 		if ch.Delta.Content != "" || ch.Delta.ReasoningContent != "" ||
 			len(ch.Delta.ToolCalls) > 0 || present(ch.Delta.FunctionCall) {
 			t.markContent(at)
@@ -222,6 +244,7 @@ func (t *SSETap) observeAnthropic(payload string, at time.Time) {
 			Text        string `json:"text"`
 			PartialJSON string `json:"partial_json"`
 			Thinking    string `json:"thinking"`
+			StopReason  string `json:"stop_reason"`
 		} `json:"delta"`
 		ContentBlock struct {
 			Type string `json:"type"`
@@ -238,6 +261,12 @@ func (t *SSETap) observeAnthropic(payload string, at time.Time) {
 	if ev.Type == "message_delta" && ev.Usage.OutputTokens > 0 {
 		t.stats.CompletionTokens = ev.Usage.OutputTokens
 		t.stats.TokensKnown = true
+	}
+	if ev.Type == "message_delta" && ev.Delta.StopReason != "" {
+		t.markFinish(at, ev.Delta.StopReason)
+	}
+	if ev.Type == "message_stop" {
+		t.markFinish(at, "")
 	}
 	content := (ev.Type == "content_block_delta" &&
 		(ev.Delta.Text != "" || ev.Delta.PartialJSON != "" || ev.Delta.Thinking != "")) ||
@@ -256,6 +285,7 @@ func (t *SSETap) observeGemini(payload string, at time.Time) {
 					FunctionCall json.RawMessage `json:"functionCall"`
 				} `json:"parts"`
 			} `json:"content"`
+			FinishReason string `json:"finishReason"`
 		} `json:"candidates"`
 		UsageMetadata *struct {
 			PromptTokenCount     int `json:"promptTokenCount"`
@@ -271,6 +301,9 @@ func (t *SSETap) observeGemini(payload string, at time.Time) {
 		t.stats.TokensKnown = true
 	}
 	for _, c := range ev.Candidates {
+		if c.FinishReason != "" {
+			t.markFinish(at, c.FinishReason)
+		}
 		for _, p := range c.Content.Parts {
 			if p.Text != "" || present(p.FunctionCall) {
 				t.markContent(at)
@@ -298,6 +331,9 @@ func (t *SSETap) observeResponses(payload string, at time.Time) {
 		t.stats.PromptTokens = ev.Response.Usage.InputTokens
 		t.stats.CompletionTokens = ev.Response.Usage.OutputTokens
 		t.stats.TokensKnown = true
+	}
+	if ev.Type == "response.completed" {
+		t.markFinish(at, "")
 	}
 	// Output text, reasoning and function-call argument deltas all carry
 	// generated tokens; lifecycle events such as response.created do not.

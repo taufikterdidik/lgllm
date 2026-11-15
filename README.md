@@ -450,6 +450,15 @@ the same data (add `?series=1` for the chart points), and `/metrics` exposes
 `lgllm_model_ttft_seconds`, `lgllm_model_tps` and
 `lgllm_model_requests_window` with `provider`, `model` and `mode` labels.
 
+**A client abort is not a model failure.** Some providers, notably Command Code,
+send `finish_reason` and the final `usage` chunk separately. A client that stops
+at `finish_reason` closes the connection while lgllm is still reading that
+trailing chunk, which used to surface as `context canceled` and lower the
+model's success rate. The stream tap now remembers the finish signal: a close
+after finish is recorded as a completed success (usage may stay `n/a`), a close
+before finish is left out of the performance window, and both are counted in
+`lgllm_client_cancelled_total{provider,after_finish}`.
+
 **Auth defaults to `localhost`.** Loopback clients are trusted so a locally
 installed CLI works with no setup; anything else must present a key. `auth.mode:
 off` is refused when the listener is not on loopback, because that would turn the

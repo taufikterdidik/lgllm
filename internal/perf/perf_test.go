@@ -247,6 +247,56 @@ func TestTapResponses(t *testing.T) {
 	}
 }
 
+func TestTapRecordsFinishAcrossFormats(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		payload string
+		reason  string
+	}{
+		{
+			name:   "openai",
+			format: "openai",
+			payload: `data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n" +
+				`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n" +
+				`data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1}}` + "\n\n" +
+				"data: [DONE]\n\n",
+			reason: "stop",
+		},
+		{
+			name:   "anthropic",
+			format: "anthropic",
+			payload: `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}` + "\n\n" +
+				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}` + "\n\n" +
+				`data: {"type":"message_stop"}` + "\n\n",
+			reason: "end_turn",
+		},
+		{
+			name:    "gemini",
+			format:  "gemini",
+			payload: `data: {"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"STOP"}]}` + "\n\n",
+			reason:  "STOP",
+		},
+		{
+			name:   "responses",
+			format: "openai-responses",
+			payload: `data: {"type":"response.output_text.delta","delta":"hi"}` + "\n\n" +
+				`data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":1}}}` + "\n\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stats := readTap(t, tt.payload, tt.format, 5)
+			if !stats.SawFinish() {
+				t.Fatalf("finish was not recorded for %s", tt.name)
+			}
+			if tt.reason != "" && stats.FinishReason != tt.reason {
+				t.Errorf("finish reason = %q, want %q", stats.FinishReason, tt.reason)
+			}
+		})
+	}
+}
+
 func TestTapWithoutUsage(t *testing.T) {
 	payload := `data: {"choices":[{"delta":{"content":"Hi"}}]}` + "\n\n" +
 		"data: [DONE]\n\n"
@@ -256,5 +306,8 @@ func TestTapWithoutUsage(t *testing.T) {
 	}
 	if stats.TokensKnown {
 		t.Error("tokens must stay unknown when the provider sends no usage")
+	}
+	if stats.SawFinish() {
+		t.Error("a stream without finish_reason must not look finished")
 	}
 }

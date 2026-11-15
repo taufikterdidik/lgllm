@@ -308,8 +308,7 @@ func (s *Server) tryConnection(
 
 		if !needsTranslation {
 			n, relayErr := s.relayVerbatim(w, resp)
-			logRelay(log, provider, model, start, n, relayErr, req.stats)
-			s.recordStreamResult(provider.ID, model, conn.ID, start, tap, relayErr)
+			s.finishStream(r, log, provider, model, conn.ID, start, n, tap, relayErr, req.stats)
 			return true, nil
 		}
 		stages := make([]translate.Converter, 0, 2)
@@ -326,8 +325,7 @@ func (s *Server) tryConnection(
 			stages = append(stages, translate.AnthropicIngressConverter(model))
 		}
 		n, relayErr := s.pipeConverted(w, r, resp, stages...)
-		logRelay(log, provider, model, start, n, relayErr, req.stats)
-		s.recordStreamResult(provider.ID, model, conn.ID, start, tap, relayErr)
+		s.finishStream(r, log, provider, model, conn.ID, start, n, tap, relayErr, req.stats)
 		return true, nil
 	}
 

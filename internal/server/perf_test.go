@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +13,8 @@ import (
 	"time"
 
 	"lgllm/internal/perf"
+	"lgllm/internal/registry"
+	"lgllm/internal/tokensaver"
 )
 
 func TestAdminPerformanceShowsWindowAndSplitsModes(t *testing.T) {
@@ -315,6 +320,89 @@ func TestPerformanceRecordsFailedAttempt(t *testing.T) {
 	if agg.Stream.Samples != 0 || agg.NonStream.Samples != 0 {
 		t.Errorf("a failure must not enter the averages: %+v", agg)
 	}
+}
+
+func TestClientCancelAfterFinishIsSuccess(t *testing.T) {
+	s, _, _ := newAdminTestServer(t, false)
+	tap := readFinishTap(t,
+		`data: {"choices":[{"delta":{"content":"hi"}}]}`+"\n\n"+
+			`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`+"\n\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	provider := &registry.Provider{ID: "testprov"}
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	s.finishStream(req, log,
+		provider, "test-model", "test-conn", time.Now().Add(-time.Second), 0, tap,
+		context.Canceled, tokensaver.Stats{})
+
+	agg := findAggregate(t, s.Perf.Snapshot(), "testprov", "test-model")
+	if agg.Attempts != 1 || agg.Successes != 1 || agg.Failures != 0 {
+		t.Errorf("attempts/successes/failures = %d/%d/%d, want a completed success",
+			agg.Attempts, agg.Successes, agg.Failures)
+	}
+	if agg.Stream.TokensKnown {
+		t.Error("usage arrived after the client left, so tokens must stay unknown")
+	}
+	if !strings.Contains(logBuf.String(), "client closed after finish") ||
+		strings.Contains(logBuf.String(), "stream ended with an error") {
+		t.Errorf("unexpected log: %s", logBuf.String())
+	}
+
+	var metricsOut strings.Builder
+	if err := s.Metrics.Render(&metricsOut); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(metricsOut.String(),
+		`lgllm_client_cancelled_total{provider="testprov",after_finish="true"} 1`) {
+		t.Errorf("metrics missing after-finish cancel:\n%s", metricsOut.String())
+	}
+}
+
+func TestClientCancelBeforeFinishIsNotFailure(t *testing.T) {
+	s, _, _ := newAdminTestServer(t, false)
+	tap := readFinishTap(t, `data: {"choices":[{"delta":{"content":"hi"}}]}`+"\n\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	provider := &registry.Provider{ID: "testprov"}
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	s.finishStream(req, log,
+		provider, "test-model", "test-conn", time.Now().Add(-time.Second), 0, tap,
+		context.Canceled, tokensaver.Stats{})
+
+	if agg := s.Perf.Snapshot(); len(agg) != 0 {
+		t.Errorf("aborted attempt entered the performance window: %+v", agg)
+	}
+	if !strings.Contains(logBuf.String(), "client canceled stream") ||
+		strings.Contains(logBuf.String(), "stream ended with an error") {
+		t.Errorf("unexpected log: %s", logBuf.String())
+	}
+
+	var metricsOut strings.Builder
+	if err := s.Metrics.Render(&metricsOut); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(metricsOut.String(),
+		`lgllm_client_cancelled_total{provider="testprov",after_finish="false"} 1`) {
+		t.Errorf("metrics missing early cancel:\n%s", metricsOut.String())
+	}
+}
+
+func readFinishTap(t *testing.T, payload string) *perf.SSETap {
+	t.Helper()
+	tap := perf.NewSSETap(io.NopCloser(strings.NewReader(payload)), registry.FormatChat)
+	if _, err := io.ReadAll(tap); err != nil {
+		t.Fatalf("read tap: %v", err)
+	}
+	if err := tap.Close(); err != nil {
+		t.Fatalf("close tap: %v", err)
+	}
+	return tap
 }
 
 func findAggregate(t *testing.T, all []perf.Aggregate, provider, model string) perf.Aggregate {

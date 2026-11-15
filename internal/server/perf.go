@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"sort"
@@ -64,10 +65,20 @@ func (s *Server) recordStreamAttempt(provider, model, connection string, start t
 
 // recordStreamResult decides whether a relay that already wrote bytes to the
 // client counts as a successful attempt. A stream cut in the middle is stored
-// as a failure with its partial latency, matching the success-rate definition.
-func (s *Server) recordStreamResult(provider, model, connection string, start time.Time, tap *perf.SSETap, relayErr error) {
+// as a failure with its partial latency, matching the success-rate definition,
+// unless the caller disappeared: a client abort is not a model failure. If the
+// provider had already sent a finish reason, the response did complete from the
+// model's side, so it is recorded as a success even though the trailing usage
+// chunk may never have been read.
+func (s *Server) recordStreamResult(ctx context.Context, provider, model, connection string, start time.Time, tap *perf.SSETap, relayErr error) {
 	latency := time.Since(start)
 	if relayErr != nil {
+		if streamClientGone(ctx, relayErr) {
+			if tap != nil && tap.Stats().SawFinish() {
+				s.recordStreamAttempt(provider, model, connection, start, latency, tap)
+			}
+			return
+		}
 		s.recordFailedAttempt(provider, model, connection, true, latency)
 		return
 	}

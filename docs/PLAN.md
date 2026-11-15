@@ -1280,6 +1280,65 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 17. Stream cancel setelah finish (Command Code) — ✅ SELESAI
+
+> Status: `context canceled` pada provider Command Code tidak lagi dicatat
+> sebagai kegagalan model. Penyebabnya adalah Command Code mengirim
+> `finish_reason` dan chunk `usage` secara terpisah, sehingga client yang
+> berhenti di `finish_reason` menutup koneksi sebelum chunk usage dan `[DONE]`
+> terbaca. Tap sekarang mencatat sinyal finish; abort setelah finish dihitung
+> sukses, abort sebelum finish tidak masuk success rate, dan keduanya terlihat
+> di `lgllm_client_cancelled_total`.
+
+### 17a. Keputusan implementasi — ✅ SELESAI
+
+- **Akar masalah.** Reproduksi dengan client yang berhenti tepat di
+  `finish_reason` menghasilkan `context canceled` hanya untuk Command Code.
+  Command Code mengirim chunk finish tanpa `usage`, lalu chunk usage terpisah,
+  lalu `[DONE]`; OpenCode Go menggabungkan `finish_reason` dan `usage` dalam
+  satu chunk. Client yang berhenti di finish membatalkan `r.Context()` saat
+  lgllm masih menunggu sisa stream.
+- **Sinyal finish di tap.** `perf.TapStats` mendapat `FinishedAt` dan
+  `FinishReason`, dengan helper `SawFinish()`. Deteksi mencakup OpenAI
+  (`choices[].finish_reason`), Anthropic (`message_delta.stop_reason` dan
+  `message_stop`), Gemini (`candidates[].finishReason`), dan Responses
+  (`response.completed`). Tap tetap read-only dan tidak mengubah byte.
+- **Klasifikasi abort.** `finishStream` membedakan tiga hasil: selesai normal,
+  client pergi setelah finish, dan client pergi sebelum finish. Abort terdeteksi
+  dari `context.Canceled` yang disertai `r.Context().Err() != nil`, atau dari
+  `upstream.ErrWriteTimeout` (client berhenti membaca).
+- **Dampak ke performa.** Abort setelah finish dicatat sebagai attempt sukses;
+  usage tetap `n/a` karena chunk usage mungkin belum terbaca. Abort sebelum
+  finish tidak dicatat sebagai sukses maupun gagal, sehingga success rate model
+  tidak turun karena client yang menutup koneksi.
+- **Log.** Pembatalan klien dicatat pada level INFO dengan pesan
+  `client closed after finish` atau `client canceled stream`. WARN tetap
+  dipakai untuk error upstream nyata dan idle timeout.
+- **Metrik.** Counter `lgllm_client_cancelled_total{provider,after_finish}`
+  membedakan abort setelah finish dari abort dini. Tidak ada state tambahan;
+  counter hidup di `internal/metrics` seperti counter lain.
+- **Tanpa buffering finish.** Chunk `finish_reason` tidak ditahan sampai usage
+  datang, karena itu menambah latensi dan melanggar passthrough byte-identik.
+- **Verifikasi.** Test tap untuk empat format, test server untuk abort
+  setelah/sebelum finish (perf, log, dan counter), serta `make check` dan
+  `go test -race ./...` bersih.
+
+### 17b. Belum masuk fase 17
+
+- **Usage setelah client pergi.** Kalau client menutup sebelum chunk usage,
+  token completion tetap tidak diketahui; TPS model tersebut `n/a`.
+- **Client yang berhenti di finish.** Perilaku client tetap di luar kendali
+  lgllm; client yang ingin usage lengkap harus membaca sampai `[DONE]`.
+- **Counter per model.** `lgllm_client_cancelled_total` hanya berlabel provider,
+  belum model atau connection.
+- **Ambang abort.** Belum ada klasifikasi abort karena timeout client tertentu
+  versus tombol stop; keduanya saat ini terlihat sama.
+- **Provider lain dengan chunk pasca-finish.** Mekanisme tap generik sudah
+  menangani finish, tetapi belum ada test live untuk setiap provider.
+- **Persistensi.** Counter dan sinyal finish tetap in-memory seperti metrik lain.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1300,6 +1359,7 @@ jujur tanpa menambah lapisan routing baru.
 | 14 | Builtin OpenCode Go + session header | 1 hari | ✅ `opencode-go` + `session_header` |
 | 15 | Builtin Command Code (chat + Claude) | 1 hari | ✅ `commandcode` + `commandcode-claude` |
 | 16 | Dashboard performa lanjutan | 1 hari | ✅ grafik, per-connection, gauge Prometheus |
+| 17 | Stream cancel setelah finish | 0,5 hari | ✅ abort client tidak dihitung gagal + counter |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

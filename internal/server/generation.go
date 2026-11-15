@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"lgllm/internal/perf"
 	"lgllm/internal/registry"
 	"lgllm/internal/tokensaver"
 	"lgllm/internal/translate"
@@ -289,8 +290,39 @@ func (s *Server) relayVerbatim(w http.ResponseWriter, resp *http.Response) (int6
 	return s.Upstream.Relay(w, resp, isSSE)
 }
 
+// finishStream classifies and records one relayed stream.
+//
+// A client may close right after the provider sends finish_reason, before the
+// trailing usage chunk. That is a finished response, not a model failure: the
+// attempt is recorded as a success (usage stays unknown). A client that leaves
+// before finish is neither a success nor a failure, so no perf sample is
+// recorded. The distinction is also visible in /metrics.
+func (s *Server) finishStream(r *http.Request, log *slog.Logger, provider *registry.Provider, model, connection string, start time.Time, n int64, tap *perf.SSETap, relayErr error, stats tokensaver.Stats) {
+	clientGone := streamClientGone(r.Context(), relayErr)
+	finished := tap != nil && tap.Stats().SawFinish()
+	logRelay(log, provider, model, start, n, relayErr, stats, clientGone, finished)
+	if clientGone {
+		s.Metrics.ObserveClientCancel(provider.ID, finished)
+	}
+	s.recordStreamResult(r.Context(), provider.ID, model, connection, start, tap, relayErr)
+}
+
+// streamClientGone reports whether a relay error means the caller disappeared.
+// A write timeout is always a client problem; a cancelled context only counts
+// when the request context itself was cancelled (a provider-side reset would
+// leave ctx alive).
+func streamClientGone(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, upstream.ErrWriteTimeout) {
+		return true
+	}
+	return ctx.Err() != nil && errors.Is(err, context.Canceled)
+}
+
 // logRelay records one stream or passthrough response.
-func logRelay(log *slog.Logger, provider *registry.Provider, model string, start time.Time, n int64, err error, stats tokensaver.Stats) {
+func logRelay(log *slog.Logger, provider *registry.Provider, model string, start time.Time, n int64, err error, stats tokensaver.Stats, clientGone, finished bool) {
 	attrs := []any{
 		"provider", provider.ID,
 		"model", model,
@@ -301,10 +333,12 @@ func logRelay(log *slog.Logger, provider *registry.Provider, model string, start
 	switch {
 	case err == nil:
 		log.Info("proxied completion", attrs...)
+	case clientGone && finished:
+		log.Info("client closed after finish", append(attrs, "err", err)...)
+	case clientGone:
+		log.Info("client canceled stream", append(attrs, "err", err)...)
 	case errors.Is(err, upstream.ErrIdle):
 		log.Warn("upstream stream stalled; closed it", attrs...)
-	case errors.Is(err, upstream.ErrWriteTimeout):
-		log.Debug("client stopped reading; closed the stream", attrs...)
 	default:
 		log.Warn("stream ended with an error", append(attrs, "err", err)...)
 	}

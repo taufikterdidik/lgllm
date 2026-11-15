@@ -51,27 +51,34 @@ type failureKey struct {
 	Status   int
 }
 
+type clientCancelKey struct {
+	Provider    string
+	AfterFinish bool
+}
+
 // Metrics is safe for concurrent use.
 type Metrics struct {
-	mu          sync.Mutex
-	requests    map[requestKey]int64
-	durations   map[durationKey]*durationStats
-	tokens      map[tokenKey]int64
-	saved       map[providerKey]int64
-	failures    map[failureKey]int64
-	rateLimited map[string]int64
-	inflight    int64
+	mu              sync.Mutex
+	requests        map[requestKey]int64
+	durations       map[durationKey]*durationStats
+	tokens          map[tokenKey]int64
+	saved           map[providerKey]int64
+	failures        map[failureKey]int64
+	rateLimited     map[string]int64
+	clientCancelled map[clientCancelKey]int64
+	inflight        int64
 }
 
 // New returns an empty collector.
 func New() *Metrics {
 	return &Metrics{
-		requests:    make(map[requestKey]int64),
-		durations:   make(map[durationKey]*durationStats),
-		tokens:      make(map[tokenKey]int64),
-		saved:       make(map[providerKey]int64),
-		failures:    make(map[failureKey]int64),
-		rateLimited: make(map[string]int64),
+		requests:        make(map[requestKey]int64),
+		durations:       make(map[durationKey]*durationStats),
+		tokens:          make(map[tokenKey]int64),
+		saved:           make(map[providerKey]int64),
+		failures:        make(map[failureKey]int64),
+		rateLimited:     make(map[string]int64),
+		clientCancelled: make(map[clientCancelKey]int64),
 	}
 }
 
@@ -151,6 +158,15 @@ func (m *Metrics) ObserveRateLimited(reason string) {
 	m.mu.Unlock()
 }
 
+// ObserveClientCancel counts a stream abandoned by the client. afterFinish says
+// whether the provider had already sent a finish reason, which separates a
+// completed response with a trailing usage chunk from a genuinely early abort.
+func (m *Metrics) ObserveClientCancel(provider string, afterFinish bool) {
+	m.mu.Lock()
+	m.clientCancelled[clientCancelKey{Provider: provider, AfterFinish: afterFinish}]++
+	m.mu.Unlock()
+}
+
 // Render writes the Prometheus text exposition.
 func (m *Metrics) Render(w io.Writer) error {
 	m.mu.Lock()
@@ -208,6 +224,18 @@ func (m *Metrics) Render(w io.Writer) error {
 		func(emit func(labels string, value int64)) {
 			for reason, v := range m.rateLimited {
 				emit(fmt.Sprintf(`reason="%s"`, esc(reason)), v)
+			}
+		}); err != nil {
+		return err
+	}
+
+	if err := writeCounter(w,
+		"lgllm_client_cancelled_total",
+		"Streams abandoned by the client, split by whether the provider had already finished.",
+		func(emit func(labels string, value int64)) {
+			for k, v := range m.clientCancelled {
+				emit(fmt.Sprintf(`provider="%s",after_finish="%t"`,
+					esc(k.Provider), k.AfterFinish), v)
 			}
 		}); err != nil {
 		return err
