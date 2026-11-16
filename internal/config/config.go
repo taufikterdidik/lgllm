@@ -151,6 +151,12 @@ type Metrics struct {
 	// the admin performance view (TTFT, latency, TPS). It is in-memory and
 	// needs a restart to resize, like UsageLogSize.
 	PerformanceWindow int `yaml:"performance_window"`
+	// PerformanceDB persists performance samples in bbolt. Empty disables
+	// persistence; the in-memory ring still powers the dashboard.
+	PerformanceDB string `yaml:"performance_db"`
+	// PerformanceRetention bounds historical samples. The store also caps each
+	// provider/model/connection to a fixed number of rows.
+	PerformanceRetention Duration `yaml:"performance_retention"`
 }
 
 // Connection is one credential for a provider.
@@ -251,9 +257,10 @@ func Default() Config {
 			MaxIdleConnsPerHost:   64,
 		},
 		Metrics: Metrics{
-			Enabled:           true,
-			UsageLogSize:      500,
-			PerformanceWindow: 10,
+			Enabled:              true,
+			UsageLogSize:         500,
+			PerformanceWindow:    10,
+			PerformanceRetention: Duration(7 * 24 * time.Hour),
 		},
 		Admin: Admin{Enabled: false},
 		TokenSaver: TokenSaver{

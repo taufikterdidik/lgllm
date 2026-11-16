@@ -101,6 +101,30 @@ func run() error {
 
 	upstreamClient := upstream.New(initial.Upstream)
 
+	var perfStore *perf.Store
+	if dbPath := strings.TrimSpace(initial.Metrics.PerformanceDB); dbPath != "" {
+		perfStore, err = perf.OpenStore(dbPath, initial.Metrics.PerformanceRetention.Std())
+		if err != nil {
+			return fmt.Errorf("performance database: %w", err)
+		}
+		logger.Info("performance history enabled",
+			"path", dbPath,
+			"retention", initial.Metrics.PerformanceRetention.Std().String(),
+		)
+	}
+	perfRegistry, err := perf.NewWithStore(initial.Metrics.PerformanceWindow, perfStore)
+	if err != nil {
+		if perfStore != nil {
+			_ = perfStore.Close()
+		}
+		return fmt.Errorf("performance history: %w", err)
+	}
+	defer func() {
+		if err := perfRegistry.Close(); err != nil {
+			logger.Warn("closing performance database failed", "err", err)
+		}
+	}()
+
 	logger.Info("starting lgllm",
 		"version", version.String(),
 		"config", initial.Source,
@@ -151,6 +175,12 @@ func run() error {
 		if c.Metrics.PerformanceWindow != initial.Metrics.PerformanceWindow {
 			logger.Warn("metrics.performance_window changed, but a restart is required to resize the performance window")
 		}
+		if c.Metrics.PerformanceDB != initial.Metrics.PerformanceDB {
+			logger.Warn("metrics.performance_db changed, but a restart is required to move the performance database")
+		}
+		if c.Metrics.PerformanceRetention != initial.Metrics.PerformanceRetention {
+			logger.Warn("metrics.performance_retention changed, but a restart is required to apply it")
+		}
 		if c.Metrics.PprofListen != initial.Metrics.PprofListen {
 			logger.Warn("metrics.pprof_listen changed, but a restart is required to move the pprof listener")
 		}
@@ -185,7 +215,7 @@ func run() error {
 		Upstream: upstreamClient,
 		Metrics:  metrics.New(),
 		Usage:    usagelog.New(initial.Metrics.UsageLogSize),
-		Perf:     perf.New(initial.Metrics.PerformanceWindow),
+		Perf:     perfRegistry,
 		Admin:    adminManager,
 	})
 

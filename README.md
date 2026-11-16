@@ -6,14 +6,15 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–22 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–23 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
 per-key rate limits, an admin REST API with an embedded web UI, packaging
 benchmarks, a per-model TTFT/latency/TPS dashboard, client-abort classification,
 a model-detail endpoint with combo context windows, a form-based admin UI with
-generated client keys, and app/favicon assets. 9Router parity is not the goal; see
+generated client keys, bbolt-backed performance history, and app/favicon assets.
+9Router parity is not the goal; see
 [`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each phase
 deliberately leaves out.
 
@@ -486,8 +487,14 @@ between the first and last content event; a JSON response has no first-token
 signal, so its TPS is `tokens/latency` and the UI labels it `est.`. Failures
 count toward the success rate but not toward the averages, and a provider that
 reports no usage yields `n/a` rather than a guessed token count. The tap is
-read-only, so a passthrough stream stays byte-identical. The window is in-memory
-and resets on restart.
+read-only, so a passthrough stream stays byte-identical.
+
+The ring is the fast read path. Set `metrics.performance_db` to a bbolt file to
+also persist samples: writes go through a bounded background queue, the latest
+window is loaded at startup, samples older than `metrics.performance_retention`
+(default 168h) are pruned, and each provider/model/connection is capped at 2000
+rows. Leaving `performance_db` empty keeps the old in-memory-only behavior. Under
+systemd, use a writable path such as `/var/lib/lgllm/performance.db`.
 
 The Performance tab also keeps a ring per connection, so one slow credential can
 be separated from a healthy one on the same provider. Click a row for the

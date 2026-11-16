@@ -69,6 +69,14 @@ metrics:
   # Attempts kept per model for the Performance tab / /api/performance (TTFT,
   # latency, TPS). In-memory; resizing needs a restart. Must be positive.
   performance_window: 10
+  # Optional bbolt database for performance samples. The in-memory window stays
+  # the read path; the database is loaded at startup so history survives a
+  # restart. Empty disables persistence. Under systemd, use a writable path such
+  # as /var/lib/lgllm/performance.db.
+  # performance_db: /var/lib/lgllm/performance.db
+  # Samples older than this are pruned. Each provider/model/connection is also
+  # capped at 2000 rows. Changing it needs a restart.
+  performance_retention: 168h
 
 upstream:
   # TCP connect + TLS handshake.

@@ -1566,6 +1566,52 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 23. Persistensi performance dengan bbolt + ring — ✅ SELESAI
+
+> Status: sampel performa tetap dibaca dari ring in-memory, tetapi sekarang bisa
+> ditulis ke bbolt lewat queue write-behind. Saat restart, ring diisi kembali
+> dari sampel terbaru di database.
+
+### 23a. Keputusan implementasi — ✅ SELESAI
+
+- **Ring tetap jalur baca.** API/UI tidak menunggu disk. `Registry` menyimpan
+  ring per model dan per connection seperti sebelumnya; bbolt hanya menerima
+  salinan sampel.
+- **Write-behind queue.** `perf.Store` memakai channel berkapasitas 4096,
+  batches hingga 200 sampel, dan flush setiap 200ms. Queue penuh men-drop sampel
+  (best-effort metrics), bukan memblokir request.
+- **Skema bbolt.** Bucket `models` berisi sub-bucket
+  `provider\x00model\x00connection`; setiap sampel diberi sequence bbolt.
+  `LoadRecent` mengambil N sampel terbaru per key, mengurutkannya berdasarkan
+  waktu, lalu mengisi ring model/connection tanpa menulis ulang ke DB.
+- **Retensi dan batas.** `metrics.performance_retention` default 168 jam; setiap
+  key dibatasi 2000 baris. Prune dilakukan saat open, berkala saat flush, dan
+  saat shutdown.
+- **Konfigurasi.** `metrics.performance_db` kosong berarti persistence mati.
+  Path non-empty membuka database mode 0600; parent directory dibuat 0750.
+  Perubahan path/retensi membutuhkan restart dan menghasilkan warning reload.
+- **Operasional.** Store ditutup setelah HTTP server shutdown, sehingga sampel
+  terakhir di queue sempat ditulis. bbolt lock timeout 1 detik dan schema
+  version dicek saat open.
+- **Verifikasi.** Test menulis 5 sampel, menutup registry, membuka database
+  lagi, dan memastikan ring/connection berisi 3 sampel terbaru. Test config
+  mencakup default retention dan nilai nol; `make check` dan race test bersih.
+
+### 23b. Belum masuk fase 23
+
+- **API history panjang.** API masih membaca ring; belum ada endpoint untuk
+  query deret waktu dari bbolt.
+- **Kapasitas per key configurable.** Batas 2000 masih konstanta kode.
+- **Kompresi/rotasi file.** Belum ada compaction manual, enkripsi database, atau
+  rotasi file.
+- **Multi-proses.** Satu file bbolt hanya boleh dibuka satu proses; belum ada
+  dukungan multi-instance berbagi database.
+- **Metrik drop.** Jumlah sampel yang di-drop tersedia di `Store.Dropped()`,
+  tetapi belum diekspos ke `/metrics`/UI.
+- **Backup/restore.** Belum ada perintah backup database performa.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1592,6 +1638,7 @@ jujur tanpa menambah lapisan routing baru.
 | 20 | UI form provider/connection/combo + generate key | 2 hari | ✅ katalog, form, copy-once key |
 | 21 | Ikon aplikasi + favicon | 0,5 hari | ✅ favicon, apple-touch-icon, manifest |
 | 22 | Context combo + endpoint model OpenRouter | 1 hari | ✅ `/v1/model/{model}` + ctx minimum |
+| 23 | Persistensi performance bbolt + ring | 1 hari | ✅ write-behind queue + reload saat restart |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

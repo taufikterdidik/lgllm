@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateMetrics(t *testing.T) {
@@ -20,6 +21,11 @@ func TestValidateMetrics(t *testing.T) {
 			name: "zero performance window",
 			yaml: "metrics:\n  performance_window: 0\n",
 			want: "performance_window",
+		},
+		{
+			name: "zero performance retention",
+			yaml: "metrics:\n  performance_retention: 0s\n",
+			want: "performance_retention",
 		},
 		{
 			name: "pprof must be host:port",
@@ -65,6 +71,12 @@ func TestMetricsDefaults(t *testing.T) {
 	}
 	if cfg.Metrics.PerformanceWindow != 10 {
 		t.Errorf("performance_window = %d, want 10", cfg.Metrics.PerformanceWindow)
+	}
+	if cfg.Metrics.PerformanceRetention.Std() != 7*24*time.Hour {
+		t.Errorf("performance_retention = %v", cfg.Metrics.PerformanceRetention.Std())
+	}
+	if cfg.Metrics.PerformanceDB != "" {
+		t.Errorf("performance_db = %q, want disabled", cfg.Metrics.PerformanceDB)
 	}
 	if cfg.Metrics.PprofListen != "" {
 		t.Errorf("pprof_listen = %q, want empty", cfg.Metrics.PprofListen)

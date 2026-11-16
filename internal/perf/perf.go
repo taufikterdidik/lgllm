@@ -117,6 +117,9 @@ type Registry struct {
 	// the authoritative "last N attempts" for the main table; the connection
 	// rings let the detail view separate one slow account from another.
 	conns map[connKey]*window
+	// store is optional. When set, every new sample is also queued for bbolt
+	// persistence; the rings above remain the read path.
+	store *Store
 }
 
 // New returns a registry keeping window samples per provider/model. A
@@ -130,6 +133,33 @@ func New(windowSize int) *Registry {
 		windows: make(map[key]*window),
 		conns:   make(map[connKey]*window),
 	}
+}
+
+// NewWithStore returns a registry backed by bbolt. The latest ring-sized
+// samples for every key are loaded before returning, so the dashboard keeps its
+// history across a restart. The caller owns Close.
+func NewWithStore(windowSize int, store *Store) (*Registry, error) {
+	r := New(windowSize)
+	r.store = store
+	if store == nil {
+		return r, nil
+	}
+	samples, err := store.LoadRecent(r.size)
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range samples {
+		r.addRings(record.Provider, record.Model, record.Connection, record.Sample)
+	}
+	return r, nil
+}
+
+// Close drains and closes the optional persistence store.
+func (r *Registry) Close() error {
+	if r == nil || r.store == nil {
+		return nil
+	}
+	return r.store.Close()
 }
 
 // WindowSize reports the configured number of attempts kept per model.
@@ -156,14 +186,33 @@ func (r *Registry) RecordConnection(provider, model, connection string, s Sample
 	if s.At.IsZero() {
 		s.At = time.Now()
 	}
-	k := key{provider: provider, model: model}
 	r.mu.Lock()
+	r.addRingsLocked(provider, model, connection, s)
+	r.mu.Unlock()
+	if r.store != nil {
+		r.store.Enqueue(provider, model, connection, s)
+	}
+}
+
+// addRings is used when loading persisted samples: it updates the read path
+// without enqueueing the same row back to the database.
+func (r *Registry) addRings(provider, model, connection string, sample Sample) {
+	if r == nil || provider == "" || model == "" {
+		return
+	}
+	r.mu.Lock()
+	r.addRingsLocked(provider, model, connection, sample)
+	r.mu.Unlock()
+}
+
+func (r *Registry) addRingsLocked(provider, model, connection string, sample Sample) {
+	k := key{provider: provider, model: model}
 	w := r.windows[k]
 	if w == nil {
 		w = &window{size: r.size}
 		r.windows[k] = w
 	}
-	w.add(s)
+	w.add(sample)
 	if connection != "" {
 		ck := connKey{provider: provider, model: model, connection: connection}
 		cw := r.conns[ck]
@@ -171,9 +220,8 @@ func (r *Registry) RecordConnection(provider, model, connection string, s Sample
 			cw = &window{size: r.size}
 			r.conns[ck] = cw
 		}
-		cw.add(s)
+		cw.add(sample)
 	}
-	r.mu.Unlock()
 }
 
 // Series returns the model's samples oldest-first, including failures. It is

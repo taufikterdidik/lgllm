@@ -2,6 +2,9 @@
 /bin/
 /dist/
 
+# local performance database
+/performance.db
+
 # local configuration and secrets
 /config.yaml
 /config.local.yaml

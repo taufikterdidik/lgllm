@@ -524,6 +524,9 @@ func (c *Config) Validate() error {
 	if c.Metrics.PerformanceWindow < 1 {
 		add("metrics.performance_window must be positive")
 	}
+	if c.Metrics.PerformanceRetention <= 0 {
+		add("metrics.performance_retention must be positive")
+	}
 	if c.Metrics.PprofListen != "" {
 		h, p, err := net.SplitHostPort(c.Metrics.PprofListen)
 		switch {
