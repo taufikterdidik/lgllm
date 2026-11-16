@@ -17,6 +17,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /version", s.handleVersion)
 
 	// Management API. withAdminAuth answers 404 when admin.enabled is false.
+	s.mux.HandleFunc("GET /api/catalog", s.handleAdminCatalog)
 	s.mux.HandleFunc("GET /api/providers", s.handleAdminProviders)
 	s.mux.HandleFunc("POST /api/providers", s.handleAdminProviders)
 	s.mux.HandleFunc("PUT /api/providers/{id}", s.handleAdminProvider)
@@ -31,6 +32,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/combos/{name}", s.handleAdminCombo)
 	s.mux.HandleFunc("GET /api/keys", s.handleAdminKeys)
 	s.mux.HandleFunc("POST /api/keys", s.handleAdminKeys)
+	s.mux.HandleFunc("POST /api/keys/generate", s.handleAdminKeyGenerate)
 	s.mux.HandleFunc("DELETE /api/keys/{id}", s.handleAdminKey)
 	s.mux.HandleFunc("GET /api/usage", s.handleAdminUsage)
 	s.mux.HandleFunc("GET /api/performance", s.handleAdminPerformance)

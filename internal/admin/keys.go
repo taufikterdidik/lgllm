@@ -1,12 +1,25 @@
 package admin
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"strings"
 
 	"lgllm/internal/config"
 )
+
+// GenerateKey returns a new client key. The prefix makes it easy to recognize in
+// logs and paste dialogs; the random part is 256 bits from crypto/rand.
+func GenerateKey() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("read random bytes: %w", err)
+	}
+	return "sk-lgllm-" + base64.RawURLEncoding.EncodeToString(buf), nil
+}
 
 // KeyID is the non-reversible identifier returned by GET /api/keys.
 //

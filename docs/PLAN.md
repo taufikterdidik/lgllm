@@ -1431,8 +1431,63 @@ jujur tanpa menambah lapisan routing baru.
   Apple.
 - **Auto-update.** Belum ada pemeriksaan versi terbaru atau mekanisme upgrade.
 - **Soak/load test.** Rilis belum di-gate oleh uji beban jangka panjang.
-- **Publish manual pertama.** Tag pertama masih harus diputuskan operator
-  (mis. `v0.1.0`) dan workflow belum pernah dijalankan di GitHub nyata.
+- **Rilis pertama.** `v0.1.0` sudah dipublikasikan pada 2026-11-15; rilis
+  berikutnya memakai workflow yang sama.
+
+---
+
+## 20. Konfigurasi UI berbasis form + generate key — ✅ SELESAI
+
+> Status: tab Providers, Connections, Combos, dan Keys sekarang memakai form.
+> Katalog provider bawaan tersedia lewat API, provider list menampilkan status
+> koneksi, combo punya member picker, dan client key baru bisa digenerate dengan
+> tombol **Generate key**.
+
+### 20a. Keputusan implementasi — ✅ SELESAI
+
+- **Katalog untuk UI.** `GET /api/catalog` mengembalikan provider bawaan
+  (base URL, format, auth, headers, model hints, `key_env`, situs) sehingga form
+  tidak perlu menyalin daftar di JavaScript.
+- **Provider list efektif.** `GET /api/providers?all=1` menggabungkan provider
+  yang dikonfigurasi dengan katalog yang belum dipakai, memakai field hasil
+  materialisasi, dan menambahkan `connected`, `connections`, `key_env`, `site`.
+  Sumbernya dibedakan `catalog`, `config`, atau `admin`. Tanpa `?all=1`, respons
+  lama tetap berisi provider efektif yang sudah ada.
+- **Generate key.** `POST /api/keys/generate` membuat
+  `sk-lgllm-<32 byte random base64url>` dengan `crypto/rand`, menyimpannya di
+  overlay, dan mengembalikan plaintext sekali. `GET /api/keys` tetap hanya
+  menampilkan hash prefix. `POST /api/keys` tetap tersedia untuk key manual.
+- **Form provider.** Sumber `catalog`/`custom`, prefill otomatis, edit base URL,
+  format, auth, timeout, session header, header key/value, dan model rows
+  (id/name/context/capabilities). Memilih catalog lalu menyimpan membuat override
+  admin tanpa mengubah katalog; provider config tetap read-only.
+- **Form connection.** Provider dipilih dari dropdown (termasuk katalog yang
+  belum terhubung), ID disarankan otomatis, API key password, override base URL,
+  dan status disabled. Key `***` tidak dikirim balik; field kosong mempertahankan
+  nilai lama.
+- **Form combo.** Strategy, token saver tri-state (inherit/on/off), dan member
+  list dengan picker model, input bebas untuk alias, serta tombol urut naik/turun.
+- **Keys UI.** Tombol utama Generate key menampilkan modal copy-once; add existing
+  key tetap tersedia sebagai aksi sekunder.
+- **Smoke test.** Server sementara + Playwright menjalankan alur tambah provider
+  katalog, tambah connection, tambah combo, dan generate key tanpa console error.
+
+### 20b. Belum masuk fase 20
+
+- **Alias UI.** Alias routing masih lewat config/CLI; belum ada tab alias.
+- **Sync model dari upstream.** Form provider masih manual; tombol “fetch models”
+  yang memakai `GET /models` provider belum ada.
+- **Test sebelum simpan.** Test connection memakai connection tersimpan; belum
+  ada test inline dengan API key yang belum disimpan.
+- **Metadata key.** Belum ada label, tanggal dibuat, expiry, atau usage per key.
+- **Section config lain.** `server`, `auth`, `metrics`, `upstream`, dan `admin`
+  tetap diedit lewat file config.
+- **Advanced JSON.** Editor JSON mentah sudah dihapus dari jalur utama; pengguna
+  yang butuh field di luar form harus mengedit `admin.yaml`/`config.yaml`.
+- **Drag-and-drop dan import/export.** Reorder combo masih tombol, belum drag;
+  belum ada backup/restore konfigurasi dari UI.
+- **Mobile polish.** Tabel dan form responsif dasar, tetapi belum dioptimalkan
+  untuk layar kecil.
 
 ---
 
@@ -1459,6 +1514,7 @@ jujur tanpa menambah lapisan routing baru.
 | 17 | Stream cancel setelah finish | 0,5 hari | ✅ abort client tidak dihitung gagal + counter |
 | 18 | Endpoint detail model | 0,5 hari | ✅ `GET /v1/models/{model...}` |
 | 19 | Proses rilis | 1 hari | ✅ workflow tag → artifacts + image + release |
+| 20 | UI form provider/connection/combo + generate key | 2 hari | ✅ katalog, form, copy-once key |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

@@ -4,13 +4,14 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–18 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–20 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
 per-key rate limits, an admin REST API with an embedded web UI, packaging
 benchmarks, a per-model TTFT/latency/TPS dashboard, client-abort classification,
-and a model-detail endpoint. 9Router parity is not the goal; see
+a model-detail endpoint, and a form-based admin UI with generated client keys.
+9Router parity is not the goal; see
 [`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each phase
 deliberately leaves out.
 
@@ -216,10 +217,12 @@ keys. Without a token it is loopback-only and a public bind is refused.
 
 | Endpoint | Methods |
 |---|---|
-| `/api/providers` | `GET`, `POST`; `PUT/DELETE /api/providers/{id}` |
+| `/api/providers` | `GET` (`?all=1` includes the catalog), `POST`; `PUT/DELETE /api/providers/{id}` |
+| `/api/catalog` | `GET` built-in provider definitions |
 | `/api/connections` | `GET`, `POST`; `PUT/DELETE /api/connections/{id}` |
 | `/api/combos` | `GET`, `POST`; `PUT/DELETE /api/combos/{name}` |
 | `/api/keys` | `GET`, `POST`; `DELETE /api/keys/{id}` |
+| `/api/keys/generate` | `POST`; returns a new `sk-lgllm-...` key once |
 | `/api/usage?from=&to=&group=provider\|model\|day` | `GET` |
 | `/api/performance?provider=` | `GET` (recent TTFT/latency/TPS per model) |
 | `/api/logs?limit=N` | `GET` |
@@ -230,7 +233,9 @@ The main `config.yaml` is never rewritten (it may contain `${ENV}` references an
 comments). API-created resources live in `admin.yaml` next to it, merged at
 startup, written atomically with mode 0600, and secrets are encrypted when a
 master key is configured. Entries from `config.yaml` are listed with
-`"managed":"config"` and are read-only through the API. A mutation is validated
+`"managed":"config"` and are read-only through the API; built-in catalog entries
+use `"managed":"catalog"` and can be customized by creating an admin override. A
+mutation is validated
 against the full config and the provider catalog before it is published; a
 rejected change rolls the file back. `GET` redacts keys (`***`); sending `***`
 back keeps the stored value. When `metrics.usage_log_size` is 0 the usage and log
@@ -242,11 +247,17 @@ With `admin.enabled: true`, open `http://127.0.0.1:20128/ui/` and paste the admi
 token. The page is plain HTML/CSS/JS embedded in the binary (no Node, no asset
 directory) and has tabs for providers, connections, combos, keys, usage,
 performance, live logs, and settings. It calls the admin API with `X-Admin-Token`;
-the token is kept
-in `localStorage` for that browser only. Static assets carry a strict
-`Content-Security-Policy` and are served without an inference key, while every
-API call still needs the admin token. When the admin API is off, `/ui/` answers
-404.
+the token is kept in `localStorage` for that browser only. Static assets carry a
+strict `Content-Security-Policy` and are served without an inference key, while
+every API call still needs the admin token. When the admin API is off, `/ui/`
+answers 404.
+
+Providers, connections, and combos are configured with forms, not raw JSON:
+choose a built-in catalog entry (or a custom endpoint), edit headers and models,
+pick a provider from a dropdown for a connection, and build combo members from
+the model list. Keys has a **Generate key** action that creates a random
+`sk-lgllm-...` value, shows it once, and copies it to the clipboard; only the
+hash prefix is listed afterwards. Config-managed entries remain read-only.
 
 ### Observability
 

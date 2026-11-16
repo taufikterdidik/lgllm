@@ -42,6 +42,14 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 	if !strings.Contains(js.Body.String(), "low_sample") || !strings.Contains(js.Body.String(), "connections") {
 		t.Error("app.js does not render the low-sample and per-connection fields")
 	}
+	if !strings.Contains(js.Body.String(), "/api/providers?all=1") ||
+		!strings.Contains(js.Body.String(), "/api/catalog") {
+		t.Error("app.js does not load the provider catalog")
+	}
+	if !strings.Contains(js.Body.String(), "/api/keys/generate") ||
+		!strings.Contains(js.Body.String(), "Generate key") {
+		t.Error("app.js does not expose key generation")
+	}
 	if !strings.Contains(page.Body.String(), `data-tab="performance"`) {
 		t.Error("index does not have a performance tab")
 	}

@@ -58,42 +58,298 @@ function badge(text, cls) {
   return el('span', { class: 'pill ' + (cls || ''), text });
 }
 
-function openEditor(title, template, onSave) {
-  const dlg = el('dialog');
-  const area = el('textarea', { spellcheck: 'false' });
-  area.value = template;
+const FORMAT_OPTIONS = [
+  { value: 'openai', label: 'OpenAI Chat Completions' },
+  { value: 'anthropic', label: 'Anthropic Messages' },
+  { value: 'gemini', label: 'Gemini generateContent' },
+  { value: 'openai-responses', label: 'OpenAI Responses' },
+  { value: 'ollama', label: 'Ollama native' },
+];
+
+const AUTH_OPTIONS = [
+  { value: 'bearer', label: 'Bearer token' },
+  { value: 'x-api-key', label: 'x-api-key header' },
+  { value: 'query', label: 'Query parameter' },
+  { value: 'none', label: 'No authentication' },
+];
+
+let formSequence = 0;
+
+function formField(label, control, hint) {
+  return el('label', { class: 'field' }, [
+    el('span', { class: 'field-label', text: label }),
+    control,
+    hint ? el('span', { class: 'field-hint', text: hint }) : null,
+  ]);
+}
+
+function textInput(value = '', attrs = {}) {
+  const input = el('input', Object.assign({ type: 'text' }, attrs));
+  input.value = value === null || value === undefined ? '' : value;
+  return input;
+}
+
+function numberInput(value = 0, attrs = {}) {
+  const input = el('input', Object.assign({ type: 'number', min: '0' }, attrs));
+  input.value = value === null || value === undefined ? '' : value;
+  return input;
+}
+
+function selectInput(options, value) {
+  const select = el('select');
+  for (const option of options) {
+    const item = el('option', { value: option.value, text: option.label });
+    if (String(option.value) === String(value)) item.selected = true;
+    select.appendChild(item);
+  }
+  return select;
+}
+
+function checkboxInput(label, checked) {
+  const input = el('input', { type: 'checkbox' });
+  input.checked = Boolean(checked);
+  return { input, node: el('label', { class: 'check' }, [input, el('span', { text: label })]) };
+}
+
+function formSection(title, children, hint) {
+  return el('fieldset', { class: 'form-section' }, [
+    el('legend', { text: title }),
+    hint ? el('p', { class: 'field-hint', text: hint }) : null,
+    ...children,
+  ]);
+}
+
+function openForm(title, content, onSave, saveText = 'Save') {
+  const dlg = el('dialog', { class: 'form-dialog' });
   const error = el('div', { class: 'error' });
-  const save = el('button', { text: 'Save' });
-  const cancel = el('button', { text: 'Cancel' });
-  cancel.addEventListener('click', () => dlg.close());
-  save.addEventListener('click', async () => {
-    let parsed;
-    try {
-      parsed = JSON.parse(area.value);
-    } catch (err) {
-      error.textContent = 'Invalid JSON: ' + err.message;
-      return;
-    }
+  const save = el('button', { type: 'button', class: 'primary', text: saveText });
+  const cancel = el('button', { type: 'button', text: 'Cancel' });
+  let busy = false;
+
+  const submit = async () => {
+    if (busy) return;
+    busy = true;
     save.disabled = true;
+    error.textContent = '';
     try {
-      await onSave(parsed);
+      await onSave();
       dlg.close();
     } catch (err) {
       error.textContent = err.message;
     } finally {
+      busy = false;
       save.disabled = false;
     }
+  };
+
+  save.addEventListener('click', submit);
+  cancel.addEventListener('click', () => dlg.close());
+  const form = el('form', { class: 'modal-form' }, [
+    ...content,
+    error,
+    el('menu', {}, [cancel, save]),
+  ]);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submit();
   });
-  dlg.append(el('h3', { text: title }), area, error, el('menu', {}, [cancel, save]));
+  dlg.append(el('h3', { text: title }), form);
+  document.body.appendChild(dlg);
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.showModal();
+  const first = form.querySelector('input:not([type=checkbox]), select, textarea');
+  if (first) first.focus();
+  return { dlg, error, close: () => dlg.close() };
+}
+
+function openInfo(title, content) {
+  const dlg = el('dialog', { class: 'form-dialog' });
+  const close = el('button', { type: 'button', class: 'primary', text: 'Done' });
+  close.addEventListener('click', () => dlg.close());
+  dlg.append(el('h3', { text: title }), el('div', { class: 'modal-form' }, [
+    ...content,
+    el('menu', {}, [close]),
+  ]));
   document.body.appendChild(dlg);
   dlg.addEventListener('close', () => dlg.remove());
   dlg.showModal();
 }
 
-function clean(dto) {
-  const copy = Object.assign({}, dto);
-  delete copy.managed;
-  return JSON.stringify(copy, null, 2);
+function copyButton(text) {
+  const button = el('button', { type: 'button', text: 'Copy' });
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      const area = el('textarea', { class: 'copy-fallback' });
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      area.remove();
+    }
+    button.textContent = 'Copied';
+    setStatus('copied to clipboard', 'ok');
+  });
+  return button;
+}
+
+function keyValueEditor(initial) {
+  const list = el('div', { class: 'rows' });
+  const addRow = (key = '', value = '') => {
+    const row = el('div', { class: 'row-editor' });
+    const keyInput = textInput(key, { placeholder: 'header-name' });
+    const valueInput = textInput(value, { placeholder: 'value (*** keeps a stored secret)' });
+    const remove = el('button', { type: 'button', class: 'danger small', text: '×' });
+    remove.addEventListener('click', () => row.remove());
+    row.append(keyInput, valueInput, remove);
+    list.appendChild(row);
+    return row;
+  };
+  const replace = (values) => {
+    list.replaceChildren();
+    for (const [key, value] of Object.entries(values || {})) addRow(key, value);
+  };
+  replace(initial);
+  const add = el('button', { type: 'button', class: 'small', text: '+ header' });
+  add.addEventListener('click', () => addRow());
+  const node = el('div', {}, [list, add]);
+  return {
+    node,
+    replace,
+    values() {
+      const out = {};
+      for (const row of list.children) {
+        const inputs = row.querySelectorAll('input');
+        const key = inputs[0].value.trim();
+        if (key) out[key] = inputs[1].value;
+      }
+      return out;
+    },
+  };
+}
+
+function modelEditor(initial) {
+  const list = el('div', { class: 'rows' });
+  const addRow = (model = {}) => {
+    const row = el('div', { class: 'model-row' });
+    const id = textInput(model.id || '', { placeholder: 'model-id' });
+    const name = textInput(model.name || '', { placeholder: 'display name (optional)' });
+    const context = numberInput(model.context || '', { placeholder: 'context' });
+    const capabilities = Object.keys(model.capabilities || {}).filter((k) => model.capabilities[k]).join(',');
+    const caps = textInput(capabilities, { placeholder: 'tools, vision (optional)' });
+    const remove = el('button', { type: 'button', class: 'danger small', text: '×' });
+    remove.addEventListener('click', () => row.remove());
+    row.append(id, name, context, caps, remove);
+    list.appendChild(row);
+    return row;
+  };
+  const replace = (models) => {
+    list.replaceChildren();
+    for (const model of models || []) addRow(model);
+  };
+  replace(initial);
+  const add = el('button', { type: 'button', class: 'small', text: '+ model' });
+  add.addEventListener('click', () => addRow());
+  const node = el('div', {}, [list, add]);
+  return {
+    node,
+    replace,
+    values() {
+      const out = [];
+      for (const row of list.children) {
+        const inputs = row.querySelectorAll('input');
+        const id = inputs[0].value.trim();
+        if (!id) continue;
+        const model = { id };
+        const name = inputs[1].value.trim();
+        if (name) model.name = name;
+        const context = Number(inputs[2].value || 0);
+        if (context > 0) model.context = context;
+        const caps = inputs[3].value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+        if (caps.length) {
+          model.capabilities = {};
+          for (const cap of caps) model.capabilities[cap] = true;
+        }
+        out.push(model);
+      }
+      return out;
+    },
+  };
+}
+
+function providerTargets(providers) {
+  const out = [];
+  const seen = new Set();
+  for (const provider of providers || []) {
+    const prefix = provider.alias || provider.id;
+    for (const model of provider.models || []) {
+      const ref = prefix + '/' + model.id;
+      if (!seen.has(ref)) {
+        seen.add(ref);
+        out.push(ref);
+      }
+    }
+  }
+  out.sort();
+  return out;
+}
+
+function memberEditor(initial, providers) {
+  const list = el('div', { class: 'rows' });
+  const datalistID = 'targets-' + (++formSequence);
+  const datalist = el('datalist', { id: datalistID });
+  for (const ref of providerTargets(providers)) {
+    datalist.appendChild(el('option', { value: ref }));
+  }
+
+  const move = (row, direction) => {
+    const sibling = direction < 0 ? row.previousElementSibling : row.nextElementSibling;
+    if (!sibling) return;
+    list.insertBefore(row, direction < 0 ? sibling : sibling.nextElementSibling);
+  };
+
+  const addRow = (value = '') => {
+    const row = el('div', { class: 'member-row' });
+    const input = textInput(value, { list: datalistID, placeholder: 'provider/model or alias' });
+    const up = el('button', { type: 'button', class: 'small', text: '↑' });
+    const down = el('button', { type: 'button', class: 'small', text: '↓' });
+    const remove = el('button', { type: 'button', class: 'danger small', text: '×' });
+    up.addEventListener('click', () => move(row, -1));
+    down.addEventListener('click', () => move(row, 1));
+    remove.addEventListener('click', () => row.remove());
+    row.append(input, up, down, remove);
+    list.appendChild(row);
+    return row;
+  };
+
+  const replace = (members) => {
+    list.replaceChildren();
+    for (const member of members || []) addRow(member);
+    if (!list.children.length) addRow('');
+  };
+  replace(initial);
+
+  const free = textInput('', { list: datalistID, placeholder: 'provider/model or alias' });
+  const add = el('button', { type: 'button', class: 'small', text: '+ member' });
+  add.addEventListener('click', () => {
+    if (free.value.trim()) {
+      addRow(free.value.trim());
+      free.value = '';
+    }
+  });
+  const node = el('div', {}, [datalist, list, el('div', { class: 'row-add' }, [free, add])]);
+  return {
+    node,
+    values() {
+      const out = [];
+      for (const row of list.children) {
+        const value = row.querySelector('input').value.trim();
+        if (value) out.push(value);
+      }
+      return out;
+    },
+  };
 }
 
 async function render() {
@@ -126,106 +382,455 @@ function table(headers, rows) {
   return el('table', {}, [el('thead', {}, head), el('tbody', {}, body)]);
 }
 
+function providerLabel(provider) {
+  if (!provider) return '';
+  const name = provider.name || provider.id;
+  const refs = [provider.id];
+  if (provider.alias) refs.push(provider.alias);
+  return name + ' (' + refs.join(' / ') + ')';
+}
+
+function openProviderForm(existing, catalog, providers) {
+  const isNew = !existing;
+  const catalogByID = new Map((catalog || []).map((entry) => [entry.id, entry]));
+  const source = selectInput([
+    { value: 'catalog', label: 'Built-in catalog' },
+    { value: 'custom', label: 'Custom provider' },
+  ], existing && existing.managed !== 'catalog' ? 'custom' : 'catalog');
+  const catalogSelect = selectInput(
+    [{ value: '', label: 'Choose a catalog provider…' }].concat(
+      (catalog || []).map((entry) => ({ value: entry.id, label: entry.name + ' (' + entry.id + ')' }))),
+    existing && existing.managed === 'catalog' ? existing.id : '',
+  );
+  const id = textInput(existing ? existing.id : '');
+  const alias = textInput(existing ? existing.alias || '' : '');
+  const base = textInput(existing ? existing.base_url || '' : '');
+  const format = selectInput(FORMAT_OPTIONS, existing ? existing.format || 'openai' : 'openai');
+  const auth = selectInput(AUTH_OPTIONS, existing ? existing.auth || 'bearer' : 'bearer');
+  const authParam = textInput(existing ? existing.auth_param || '' : '', { placeholder: 'api_key' });
+  const timeout = numberInput(existing && existing.timeout_ms ? existing.timeout_ms : '', { placeholder: '0 = default' });
+  const sessionHeader = textInput(existing ? existing.session_header || '' : '');
+  const headers = keyValueEditor(existing ? existing.headers || {} : {});
+  const models = modelEditor(existing ? existing.models || [] : []);
+  const keyHint = el('span', { class: 'field-hint' });
+  const authParamField = formField('Auth parameter', authParam, 'Used when auth is "query".');
+
+  const syncAuthParam = () => {
+    authParamField.style.display = auth.value === 'query' ? '' : 'none';
+  };
+  auth.addEventListener('change', syncAuthParam);
+  syncAuthParam();
+
+  const fillFromCatalog = (entry) => {
+    if (!entry) return;
+    id.value = entry.id || '';
+    alias.value = entry.alias || '';
+    base.value = entry.base_url || '';
+    format.value = entry.format || 'openai';
+    auth.value = entry.auth || 'bearer';
+    authParam.value = entry.auth_param || '';
+    sessionHeader.value = entry.session_header || '';
+    headers.replace(entry.headers || {});
+    models.replace((entry.models || []).map((model) => ({ id: model })));
+    keyHint.textContent = entry.key_env ? 'Conventional environment variable: ' + entry.key_env : '';
+    syncAuthParam();
+  };
+
+  const clearForm = () => {
+    id.value = '';
+    alias.value = '';
+    base.value = '';
+    format.value = 'openai';
+    auth.value = 'bearer';
+    authParam.value = '';
+    sessionHeader.value = '';
+    headers.replace({});
+    models.replace([]);
+    keyHint.textContent = '';
+    syncAuthParam();
+  };
+
+  if (existing && existing.managed === 'catalog') {
+    fillFromCatalog(catalogByID.get(existing.id));
+  } else if (!existing && catalogSelect.value) {
+    fillFromCatalog(catalogByID.get(catalogSelect.value));
+  }
+  if (existing) {
+    source.disabled = true;
+    catalogSelect.disabled = true;
+  } else {
+    catalogSelect.addEventListener('change', () => {
+      if (source.value === 'catalog') fillFromCatalog(catalogByID.get(catalogSelect.value));
+    });
+    source.addEventListener('change', () => {
+      const catalogSource = source.value === 'catalog';
+      catalogSelect.disabled = !catalogSource;
+      if (catalogSource) fillFromCatalog(catalogByID.get(catalogSelect.value));
+      else clearForm();
+    });
+  }
+
+  const content = [
+    formSection('Provider', [
+      el('div', { class: 'form-grid' }, [
+        formField('Source', source),
+        formField('Catalog entry', catalogSelect),
+      ]),
+      el('div', { class: 'form-grid' }, [
+        formField('Provider id', id, 'Used as the model prefix and connection target.'),
+        formField('Alias', alias, 'Optional short prefix.'),
+      ]),
+    ]),
+    formSection('Endpoint', [
+      formField('Base URL', base, 'API root, for example https://api.example.com/v1.'),
+      el('div', { class: 'form-grid' }, [
+        formField('Format', format),
+        formField('Auth', auth),
+        formField('Timeout (ms)', timeout),
+      ]),
+      authParamField,
+      formField('Session header', sessionHeader, 'Optional header that receives a stable conversation id.'),
+      keyHint,
+    ]),
+    formSection('Headers', [headers.node], 'Secret-looking values are redacted as ***; leaving *** keeps the stored value.'),
+    formSection('Models', [models.node], 'These are hints for /v1/models; generation still forwards any model id.'),
+  ];
+
+  const title = existing
+    ? (existing.managed === 'catalog' ? 'Customize built-in provider' : 'Edit provider')
+    : 'Add provider';
+
+  openForm(title, content, async () => {
+    const dto = {
+      id: id.value.trim(),
+      alias: alias.value.trim(),
+      base_url: base.value.trim(),
+      format: format.value,
+      auth: auth.value,
+      session_header: sessionHeader.value.trim(),
+      headers: headers.values(),
+      models: models.values(),
+    };
+    if (authParam.value.trim()) dto.auth_param = authParam.value.trim();
+    const timeoutMS = Number(timeout.value || 0);
+    if (timeoutMS > 0) dto.timeout_ms = timeoutMS;
+    if (!dto.id) throw new Error('Provider id is required');
+    if (!dto.base_url) throw new Error('Base URL is required');
+
+    if (isNew || existing.managed === 'catalog') {
+      await api('/api/providers', { method: 'POST', body: JSON.stringify(dto) });
+    } else {
+      await api('/api/providers/' + encodeURIComponent(existing.id), {
+        method: 'PUT', body: JSON.stringify(dto),
+      });
+    }
+    await render();
+    if (isNew && confirm('Provider saved. Add a connection now?')) {
+      const list = await api('/api/providers?all=1');
+      setTimeout(() => openConnectionForm(null, list.data, dto.id), 0);
+    }
+  }, isNew ? 'Add provider' : 'Save provider');
+}
+
+function suggestedConnectionID(provider) {
+  return (provider || 'connection') + '-main';
+}
+
+function openConnectionForm(existing, providers, presetProvider) {
+  if (!providers || !providers.length) {
+    setStatus('Add a provider first', 'error');
+    return;
+  }
+  const providerSelect = selectInput(
+    providers.map((provider) => ({ value: provider.id, label: providerLabel(provider) })),
+    existing ? existing.provider : (presetProvider || providers[0].id),
+  );
+  const id = textInput(existing ? existing.id : suggestedConnectionID(providerSelect.value));
+  let autoID = !existing;
+  providerSelect.addEventListener('change', () => {
+    if (autoID) id.value = suggestedConnectionID(providerSelect.value);
+  });
+  id.addEventListener('input', () => { autoID = false; });
+  const key = textInput('', {
+    type: 'password', autocomplete: 'off',
+    placeholder: existing ? '*** unchanged' : 'sk-...',
+  });
+  const base = textInput(existing ? existing.base_url || '' : '', { placeholder: 'inherit provider base URL' });
+  const disabled = checkboxInput('Disabled', existing ? existing.disabled : false);
+  const keyHint = existing
+    ? 'Leave blank to keep the stored key. It is never returned by the API.'
+    : 'Stored in admin.yaml; encrypted when a master key is configured.';
+
+  const content = [
+    formSection('Connection', [
+      formField('Provider', providerSelect),
+      formField('Connection id', id),
+      formField('API key', key, keyHint),
+      formField('Base URL override', base, 'Optional; useful for a regional gateway.'),
+      disabled.node,
+    ]),
+  ];
+
+  openForm(existing ? 'Edit connection' : 'Add connection', content, async () => {
+    const dto = {
+      id: id.value.trim(),
+      provider: providerSelect.value,
+      base_url: base.value.trim(),
+      disabled: disabled.input.checked,
+    };
+    if (!dto.id) throw new Error('Connection id is required');
+    if (key.value) dto.api_key = key.value;
+
+    if (existing) {
+      await api('/api/connections/' + encodeURIComponent(existing.id), {
+        method: 'PUT', body: JSON.stringify(dto),
+      });
+    } else {
+      await api('/api/connections', { method: 'POST', body: JSON.stringify(dto) });
+    }
+    await render();
+  }, existing ? 'Save connection' : 'Add connection');
+}
+
+function openComboForm(existing, providers) {
+  const name = textInput(existing ? existing.name : '');
+  if (existing) name.disabled = true;
+  const strategy = selectInput([
+    { value: 'priority', label: 'Priority (try in order)' },
+    { value: 'round-robin', label: 'Round-robin' },
+  ], existing ? existing.strategy || 'priority' : 'priority');
+  const tokenSaver = selectInput([
+    { value: '', label: 'Inherit global setting' },
+    { value: 'true', label: 'On' },
+    { value: 'false', label: 'Off' },
+  ], existing && existing.token_saver !== undefined && existing.token_saver !== null
+    ? String(existing.token_saver) : '');
+  const members = memberEditor(existing ? existing.members || [] : [], providers);
+
+  const content = [
+    formSection('Combo', [
+      formField('Name', name, existing ? 'Combo names are fixed; create a new combo to rename.' : ''),
+      formField('Strategy', strategy),
+      formField('Token saver', tokenSaver),
+    ]),
+    formSection('Members', [members.node], 'Order matters for priority. Pick a model or type an alias/combo name.'),
+  ];
+
+  openForm(existing ? 'Edit combo' : 'Add combo', content, async () => {
+    const list = members.values();
+    if (!name.value.trim()) throw new Error('Combo name is required');
+    if (!list.length) throw new Error('Add at least one member');
+    const dto = { name: name.value.trim(), members: list, strategy: strategy.value };
+    if (tokenSaver.value !== '') dto.token_saver = tokenSaver.value === 'true';
+
+    if (existing) {
+      await api('/api/combos/' + encodeURIComponent(existing.name), {
+        method: 'PUT', body: JSON.stringify(dto),
+      });
+    } else {
+      await api('/api/combos', { method: 'POST', body: JSON.stringify(dto) });
+    }
+    await render();
+  }, existing ? 'Save combo' : 'Add combo');
+}
+
+function openKeyForm() {
+  const key = textInput('', { type: 'password', autocomplete: 'off', placeholder: 'sk-...' });
+  openForm('Add existing client key', [
+    formSection('Client key', [
+      formField('API key', key, 'At least 8 characters. Prefer Generate key for a new random key.'),
+    ]),
+  ], async () => {
+    if (!key.value.trim()) throw new Error('API key is required');
+    await api('/api/keys', { method: 'POST', body: JSON.stringify({ key: key.value.trim() }) });
+    await render();
+  }, 'Add key');
+}
+
+function showGeneratedKey(created) {
+  const output = textInput(created.key, { readonly: 'readonly', class: 'key-output' });
+  openInfo('Client key generated', [
+    el('p', { class: 'warn', text: 'Copy this key now. It is shown once and is never returned by GET /api/keys.' }),
+    output,
+    el('div', { class: 'toolbar' }, [copyButton(created.key)]),
+  ]);
+}
+
+function testConnection(provider, connection, model) {
+  const button = el('button', { class: 'small', text: 'Test' });
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const body = { provider };
+      if (connection) body.connection = connection;
+      if (model) body.model = model;
+      const result = await api('/api/test-connection', { method: 'POST', body: JSON.stringify(body) });
+      button.replaceWith(badge(
+        result.ok ? 'ok ' + result.status + ' ' + result.latency_ms + 'ms' : 'fail ' + (result.status || result.error),
+        result.ok ? 'ok' : 'bad',
+      ));
+    } catch (err) {
+      button.replaceWith(badge('fail', 'bad'));
+      setStatus(err.message, 'error');
+    }
+  });
+  return button;
+}
+
 async function renderProviders() {
-  const payload = await api('/api/providers');
+  const [payload, catalog] = await Promise.all([
+    api('/api/providers?all=1'),
+    api('/api/catalog'),
+  ]);
   const rows = payload.data.map((p) => {
     const actions = [];
-    if (p.managed === 'admin') {
-      actions.push(el('button', { text: 'Edit', onclick: () => openEditor('Edit provider', clean(p), async (dto) => {
-        await api('/api/providers/' + encodeURIComponent(p.id), { method: 'PUT', body: JSON.stringify(dto) });
-        await render();
-      }) }));
-      actions.push(el('button', { class: 'danger', text: 'Delete', onclick: async () => {
-        if (!confirm('Delete provider ' + p.id + '?')) return;
-        try { await api('/api/providers/' + encodeURIComponent(p.id), { method: 'DELETE' }); await render(); }
-        catch (err) { setStatus(err.message, 'error'); }
-      } }));
+    actions.push(el('button', {
+      class: 'small', text: 'Add connection',
+      onclick: () => openConnectionForm(null, payload.data, p.id),
+    }));
+    if (p.managed !== 'config') {
+      actions.push(el('button', {
+        class: 'small', text: p.managed === 'catalog' ? 'Customize' : 'Edit',
+        onclick: () => openProviderForm(p, catalog.data, payload.data),
+      }));
     }
-    const test = el('button', { text: 'Test', onclick: async () => {
-      test.disabled = true;
-      try {
-        const result = await api('/api/test-connection', { method: 'POST', body: JSON.stringify({ provider: p.id }) });
-        test.replaceWith(badge(result.ok ? 'ok ' + result.status + ' ' + result.latency_ms + 'ms' : 'fail ' + (result.status || result.error), result.ok ? 'ok' : 'bad'));
-      } catch (err) {
-        test.replaceWith(badge('fail', 'bad'));
-        setStatus(err.message, 'error');
-      }
-    } });
+    if (p.connected) actions.push(testConnection(p.id));
+    if (p.managed === 'admin') {
+      actions.push(el('button', {
+        class: 'danger small', text: 'Delete',
+        onclick: async () => {
+          if (!confirm('Delete provider ' + p.id + '?')) return;
+          try {
+            await api('/api/providers/' + encodeURIComponent(p.id), { method: 'DELETE' });
+            await render();
+          } catch (err) { setStatus(err.message, 'error'); }
+        },
+      }));
+    }
+
+    const name = el('div', {}, [
+      el('strong', { text: p.name || p.id }),
+      el('div', { class: 'muted small', text: p.id + (p.alias ? ' / ' + p.alias : '') }),
+    ]);
+    const connection = p.connected
+      ? badge(p.connections + ' connected', 'ok')
+      : badge('no connection', '');
     return [
-      p.id,
+      name,
       p.format || '',
-      p.base_url || '',
-      (p.models || []).map((m) => m.id).join(', '),
+      String((p.models || []).length) + ' models',
+      connection,
       badge(p.managed, p.managed === 'admin' ? 'admin' : ''),
-      [test, ...actions],
+      actions,
     ];
   });
+
   view.replaceChildren(
     el('h2', { text: 'Providers' }),
     el('div', { class: 'toolbar' }, [
-      el('button', { text: 'Add provider', onclick: () => openEditor('New provider',
-        '{\n  "id": "my-provider",\n  "base_url": "https://api.example.com/v1",\n  "format": "openai",\n  "auth": "bearer",\n  "models": [{"id": "model-id"}]\n}',
-        async (dto) => { await api('/api/providers', { method: 'POST', body: JSON.stringify(dto) }); await render(); }) }),
-      el('span', { class: 'muted', text: 'Config-managed providers are read-only. Keys never leave the server.' }),
+      el('button', {
+        class: 'primary', text: 'Add provider',
+        onclick: () => openProviderForm(null, catalog.data, payload.data),
+      }),
+      el('span', { class: 'muted', text: 'Choose a catalog provider or define a custom endpoint. Config-managed entries stay read-only.' }),
     ]),
-    table(['id', 'format', 'base_url', 'models', 'source', 'actions'], rows),
+    table(['provider', 'format', 'models', 'connections', 'source', 'actions'], rows),
   );
 }
 
 async function renderConnections() {
-  const payload = await api('/api/connections');
+  const [payload, providers] = await Promise.all([
+    api('/api/connections'),
+    api('/api/providers?all=1'),
+  ]);
   const rows = payload.data.map((c) => {
     const actions = [];
     if (c.managed === 'admin') {
-      actions.push(el('button', { text: 'Edit', onclick: () => openEditor('Edit connection', clean(c), async (dto) => {
-        await api('/api/connections/' + encodeURIComponent(c.id), { method: 'PUT', body: JSON.stringify(dto) });
-        await render();
-      }) }));
-      actions.push(el('button', { class: 'danger', text: 'Delete', onclick: async () => {
-        if (!confirm('Delete connection ' + c.id + '?')) return;
-        try { await api('/api/connections/' + encodeURIComponent(c.id), { method: 'DELETE' }); await render(); }
-        catch (err) { setStatus(err.message, 'error'); }
-      } }));
+      actions.push(el('button', {
+        class: 'small', text: 'Edit',
+        onclick: () => openConnectionForm(c, providers.data),
+      }));
+      actions.push(el('button', {
+        class: 'danger small', text: 'Delete',
+        onclick: async () => {
+          if (!confirm('Delete connection ' + c.id + '?')) return;
+          try {
+            await api('/api/connections/' + encodeURIComponent(c.id), { method: 'DELETE' });
+            await render();
+          } catch (err) { setStatus(err.message, 'error'); }
+        },
+      }));
     }
-    return [c.id, c.provider, c.base_url || '', c.api_key || '', badge(c.managed, c.managed === 'admin' ? 'admin' : ''), actions];
+    if (!c.disabled) actions.push(testConnection(c.provider, c.id));
+    return [
+      c.id,
+      c.provider,
+      c.base_url ? c.base_url : el('span', { class: 'muted', text: 'inherit' }),
+      c.api_key || '—',
+      c.disabled ? badge('disabled', 'bad') : badge('enabled', 'ok'),
+      badge(c.managed, c.managed === 'admin' ? 'admin' : ''),
+      actions,
+    ];
   });
+
   view.replaceChildren(
     el('h2', { text: 'Connections' }),
     el('div', { class: 'toolbar' }, [
-      el('button', { text: 'Add connection', onclick: () => openEditor('New connection',
-        '{\n  "id": "my-connection",\n  "provider": "my-provider",\n  "api_key": "sk-...",\n  "base_url": ""\n}',
-        async (dto) => { await api('/api/connections', { method: 'POST', body: JSON.stringify(dto) }); await render(); }) }),
-      el('span', { class: 'muted', text: 'api_key is shown as ***; saving *** keeps the stored value.' }),
+      el('button', {
+        class: 'primary', text: 'Add connection',
+        onclick: () => openConnectionForm(null, providers.data),
+      }),
+      el('span', { class: 'muted', text: 'API keys are shown as ***; leaving the field blank keeps the stored value.' }),
     ]),
-    table(['id', 'provider', 'base_url', 'api_key', 'source', 'actions'], rows),
+    table(['id', 'provider', 'base_url', 'api_key', 'status', 'source', 'actions'], rows),
   );
 }
 
 async function renderCombos() {
-  const payload = await api('/api/combos');
+  const [payload, providers] = await Promise.all([
+    api('/api/combos'),
+    api('/api/providers?all=1'),
+  ]);
   const rows = payload.data.map((c) => {
     const actions = [];
     if (c.managed === 'admin') {
-      actions.push(el('button', { text: 'Edit', onclick: () => openEditor('Edit combo', clean(c), async (dto) => {
-        await api('/api/combos/' + encodeURIComponent(c.name), { method: 'PUT', body: JSON.stringify(dto) });
-        await render();
-      }) }));
-      actions.push(el('button', { class: 'danger', text: 'Delete', onclick: async () => {
-        if (!confirm('Delete combo ' + c.name + '?')) return;
-        try { await api('/api/combos/' + encodeURIComponent(c.name), { method: 'DELETE' }); await render(); }
-        catch (err) { setStatus(err.message, 'error'); }
-      } }));
+      actions.push(el('button', {
+        class: 'small', text: 'Edit',
+        onclick: () => openComboForm(c, providers.data),
+      }));
+      actions.push(el('button', {
+        class: 'danger small', text: 'Delete',
+        onclick: async () => {
+          if (!confirm('Delete combo ' + c.name + '?')) return;
+          try {
+            await api('/api/combos/' + encodeURIComponent(c.name), { method: 'DELETE' });
+            await render();
+          } catch (err) { setStatus(err.message, 'error'); }
+        },
+      }));
     }
-    return [c.name, (c.members || []).join(' → '), c.strategy || 'priority', badge(c.managed, c.managed === 'admin' ? 'admin' : ''), actions];
+    const saver = c.token_saver === undefined || c.token_saver === null
+      ? 'inherit' : (c.token_saver ? 'on' : 'off');
+    return [
+      c.name,
+      (c.members || []).join(' → '),
+      c.strategy || 'priority',
+      saver,
+      badge(c.managed, c.managed === 'admin' ? 'admin' : ''),
+      actions,
+    ];
   });
+
   view.replaceChildren(
     el('h2', { text: 'Combos' }),
     el('div', { class: 'toolbar' }, [
-      el('button', { text: 'Add combo', onclick: () => openEditor('New combo',
-        '{\n  "name": "my-combo",\n  "strategy": "priority",\n  "members": ["provider/model"]\n}',
-        async (dto) => { await api('/api/combos', { method: 'POST', body: JSON.stringify(dto) }); await render(); }) }),
+      el('button', {
+        class: 'primary', text: 'Add combo',
+        onclick: () => openComboForm(null, providers.data),
+      }),
+      el('span', { class: 'muted', text: 'A combo is a named list of models tried in order or round-robin.' }),
     ]),
-    table(['name', 'members', 'strategy', 'source', 'actions'], rows),
+    table(['name', 'members', 'strategy', 'token saver', 'source', 'actions'], rows),
   );
 }
 
@@ -234,26 +839,44 @@ async function renderKeys() {
   const rows = payload.keys.map((k) => [
     k.id,
     badge(k.source, 'admin'),
-    k.source === 'admin' ? el('button', { class: 'danger', text: 'Delete', onclick: async () => {
-      if (!confirm('Delete key ' + k.id + '?')) return;
-      try { await api('/api/keys/' + encodeURIComponent(k.id), { method: 'DELETE' }); await render(); }
-      catch (err) { setStatus(err.message, 'error'); }
-    } }) : el('span', { class: 'muted', text: 'from config' }),
+    k.source === 'admin'
+      ? el('button', {
+        class: 'danger small', text: 'Delete',
+        onclick: async () => {
+          if (!confirm('Delete key ' + k.id + '?')) return;
+          try {
+            await api('/api/keys/' + encodeURIComponent(k.id), { method: 'DELETE' });
+            await render();
+          } catch (err) { setStatus(err.message, 'error'); }
+        },
+      })
+      : el('span', { class: 'muted', text: 'from config' }),
   ]);
 
-  const input = el('input', { type: 'password', placeholder: 'sk-...', autocomplete: 'off' });
-  const add = el('button', { text: 'Add key', onclick: async () => {
-    if (!input.value) return;
-    try {
-      await api('/api/keys', { method: 'POST', body: JSON.stringify({ key: input.value }) });
-      input.value = '';
-      await render();
-    } catch (err) { setStatus(err.message, 'error'); }
-  } });
+  const generate = el('button', {
+    class: 'primary', text: 'Generate key',
+    onclick: async () => {
+      generate.disabled = true;
+      try {
+        const created = await api('/api/keys/generate', { method: 'POST' });
+        await render();
+        showGeneratedKey(created);
+      } catch (err) {
+        setStatus(err.message, 'error');
+      } finally {
+        generate.disabled = false;
+      }
+    },
+  });
+  const add = el('button', { text: 'Add existing key', onclick: openKeyForm });
 
   view.replaceChildren(
     el('h2', { text: 'Client keys' }),
-    el('div', { class: 'toolbar' }, [input, add, el('span', { class: 'muted', text: 'Keys are shown as a hash prefix, never in full.' })]),
+    el('div', { class: 'toolbar' }, [
+      generate,
+      add,
+      el('span', { class: 'muted', text: 'Generated keys are shown once; only a hash prefix is stored for listing.' }),
+    ]),
     el('p', { class: 'muted', text: 'config keys: ' + payload.config_keys }),
     table(['id', 'source', 'actions'], rows),
   );

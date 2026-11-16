@@ -26,7 +26,7 @@ import (
 func isAdminPath(p string) bool {
 	switch p {
 	case "/api/providers", "/api/connections", "/api/combos", "/api/keys",
-		"/api/usage", "/api/performance", "/api/logs", "/api/logs/stream",
+		"/api/catalog", "/api/usage", "/api/performance", "/api/logs", "/api/logs/stream",
 		"/api/test-connection":
 		return true
 	}
@@ -97,6 +97,7 @@ type adminModel struct {
 
 type adminProvider struct {
 	ID            string            `json:"id"`
+	Name          string            `json:"name,omitempty"`
 	Alias         string            `json:"alias,omitempty"`
 	BaseURL       string            `json:"base_url"`
 	Format        string            `json:"format"`
@@ -106,7 +107,29 @@ type adminProvider struct {
 	SessionHeader string            `json:"session_header,omitempty"`
 	TimeoutMS     int64             `json:"timeout_ms,omitempty"`
 	Models        []adminModel      `json:"models,omitempty"`
-	Managed       string            `json:"managed"` // config|admin
+	KeyEnv        string            `json:"key_env,omitempty"`
+	Site          string            `json:"site,omitempty"`
+	Connected     bool              `json:"connected"`
+	Connections   int               `json:"connections"`
+	Managed       string            `json:"managed"` // catalog|config|admin
+}
+
+// adminCatalogProvider is one built-in provider definition. It has no
+// connection state because it describes what the catalog offers, not what the
+// operator has configured.
+type adminCatalogProvider struct {
+	ID            string            `json:"id"`
+	Alias         string            `json:"alias,omitempty"`
+	Name          string            `json:"name"`
+	BaseURL       string            `json:"base_url"`
+	Format        string            `json:"format"`
+	Auth          string            `json:"auth"`
+	AuthParam     string            `json:"auth_param,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	SessionHeader string            `json:"session_header,omitempty"`
+	Models        []string          `json:"models,omitempty"`
+	KeyEnv        string            `json:"key_env,omitempty"`
+	Site          string            `json:"site,omitempty"`
 }
 
 type adminConnection struct {
@@ -129,6 +152,9 @@ type adminCombo struct {
 type adminKey struct {
 	ID     string `json:"id"`
 	Source string `json:"source"` // config|admin
+	// Key is set only in the response to POST /api/keys/generate. GET never
+	// returns plaintext keys.
+	Key string `json:"key,omitempty"`
 }
 
 func providerDTO(p config.Provider, managed string) adminProvider {
@@ -136,6 +162,11 @@ func providerDTO(p config.Provider, managed string) adminProvider {
 		ID: p.ID, Alias: p.Alias, BaseURL: p.BaseURL, Format: p.Format,
 		Auth: p.Auth, AuthParam: p.AuthParam, SessionHeader: p.SessionHeader,
 		Managed: managed, TimeoutMS: p.Timeout.Std().Milliseconds(),
+	}
+	if b, ok := registry.CatalogByRef(p.ID); ok {
+		out.Name = b.Name
+		out.KeyEnv = b.KeyEnv
+		out.Site = b.Site
 	}
 	if len(p.Headers) > 0 {
 		out.Headers = make(map[string]string, len(p.Headers))
@@ -147,6 +178,25 @@ func providerDTO(p config.Provider, managed string) adminProvider {
 		out.Models = append(out.Models, adminModel{
 			ID: m.ID, Name: m.Name, Context: m.Context, Capabilities: m.Capabilities,
 		})
+	}
+	return out
+}
+
+func catalogProviderDTO(b registry.Builtin) adminProvider {
+	out := adminProvider{
+		ID: b.ID, Name: b.Name, Alias: b.Alias, BaseURL: b.BaseURL,
+		Format: b.Format, Auth: b.Auth, AuthParam: b.AuthParam,
+		SessionHeader: b.SessionHeader, KeyEnv: b.KeyEnv, Site: b.Site,
+		Managed: "catalog",
+	}
+	if len(b.Headers) > 0 {
+		out.Headers = make(map[string]string, len(b.Headers))
+		for k, v := range b.Headers {
+			out.Headers[k] = v
+		}
+	}
+	for _, m := range b.Models {
+		out.Models = append(out.Models, adminModel{ID: m})
 	}
 	return out
 }
@@ -197,26 +247,105 @@ func redactHeader(key, value string) string {
 	return value
 }
 
+// --- catalog -----------------------------------------------------------------
+
+func (s *Server) handleAdminCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed", "not_found")
+		return
+	}
+	builtins := registry.Catalog()
+	out := make([]adminCatalogProvider, 0, len(builtins))
+	for _, b := range builtins {
+		out = append(out, adminCatalogProvider{
+			ID: b.ID, Alias: b.Alias, Name: b.Name, BaseURL: b.BaseURL,
+			Format: b.Format, Auth: b.Auth, AuthParam: b.AuthParam,
+			Headers: b.Headers, SessionHeader: b.SessionHeader,
+			Models: b.Models, KeyEnv: b.KeyEnv, Site: b.Site,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": out})
+}
+
+func canonicalProviderID(ref string) string {
+	if b, ok := registry.CatalogByRef(ref); ok {
+		return b.ID
+	}
+	return ref
+}
+
+// buildAdminProviders returns the effective providers plus, when all is true,
+// catalog entries that have no config or admin override yet. Effective fields
+// matter to the UI: a config entry may only say "id: openai" and inherit the
+// rest from the catalog.
+func (s *Server) buildAdminProviders(all bool) []adminProvider {
+	cfg := s.Admin.Config()
+	state := s.Admin.State()
+
+	adminIDs := make(map[string]bool, len(state.Providers))
+	for _, p := range state.Providers {
+		adminIDs[canonicalProviderID(p.ID)] = true
+	}
+	configIDs := make(map[string]bool, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		id := canonicalProviderID(p.ID)
+		if !adminIDs[id] {
+			configIDs[id] = true
+		}
+	}
+	connCounts := make(map[string]int, len(cfg.Connections))
+	for _, c := range cfg.Connections {
+		if !c.Disabled {
+			connCounts[canonicalProviderID(c.Provider)]++
+		}
+	}
+
+	source := func(id string) string {
+		switch {
+		case adminIDs[id]:
+			return "admin"
+		case configIDs[id]:
+			return "config"
+		default:
+			return "catalog"
+		}
+	}
+
+	effective := registry.Materialize(cfg.Providers, cfg.Connections)
+	out := make([]adminProvider, 0, len(effective)+len(registry.Catalog()))
+	seen := make(map[string]bool, len(effective))
+	for _, p := range effective {
+		seen[p.ID] = true
+		dto := providerDTO(p, source(p.ID))
+		dto.Connections = connCounts[p.ID]
+		dto.Connected = dto.Connections > 0
+		out = append(out, dto)
+	}
+	if all {
+		for _, b := range registry.Catalog() {
+			if seen[b.ID] {
+				continue
+			}
+			dto := catalogProviderDTO(b)
+			dto.Connections = connCounts[b.ID]
+			dto.Connected = dto.Connections > 0
+			out = append(out, dto)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
 // --- providers ---------------------------------------------------------------
 
 func (s *Server) handleAdminProviders(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		cfg := s.Admin.Config()
-		state := s.Admin.State()
-		managed := make(map[string]bool, len(state.Providers))
-		for _, p := range state.Providers {
-			managed[p.ID] = true
-		}
-		out := make([]adminProvider, 0, len(cfg.Providers))
-		for _, p := range cfg.Providers {
-			source := "config"
-			if managed[p.ID] {
-				source = "admin"
-			}
-			out = append(out, providerDTO(p, source))
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": out})
+		all := r.URL.Query().Get("all") == "1"
+		writeJSON(w, http.StatusOK, map[string]any{
+			"object": "list",
+			"data":   s.buildAdminProviders(all),
+		})
 	case http.MethodPost:
 		var dto adminProvider
 		if err := decodeAdminBody(r, &dto); err != nil {
@@ -465,6 +594,27 @@ func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed", "not_found")
 	}
+}
+
+func (s *Server) handleAdminKeyGenerate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed", "not_found")
+		return
+	}
+	key, err := admin.GenerateKey()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "generating key: "+err.Error(), "internal_error")
+		return
+	}
+	if err := s.Admin.AddKey(key); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error(), "admin_error")
+		return
+	}
+	// The plaintext key is returned exactly once; keep it out of shared caches.
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, adminKey{
+		ID: admin.KeyID(key), Source: "admin", Key: key,
+	})
 }
 
 func (s *Server) handleAdminKey(w http.ResponseWriter, r *http.Request) {

@@ -150,6 +150,26 @@ func TestMutationRollsBackOnInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestGenerateKey(t *testing.T) {
+	first, err := GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(first, "sk-lgllm-") || len(first) < 32 {
+		t.Errorf("generated key = %q", first)
+	}
+	if first == second {
+		t.Error("generated keys must differ")
+	}
+	if KeyID(first) == KeyID(second) {
+		t.Error("generated key ids must differ")
+	}
+}
+
 func TestKeys(t *testing.T) {
 	dir, base := writeBase(t, true)
 	m := newManager(t, dir, base, nil)

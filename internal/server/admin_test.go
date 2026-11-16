@@ -140,6 +140,99 @@ func TestAdminAuthIsSeparate(t *testing.T) {
 	}
 }
 
+func TestAdminCatalogListsBuiltinProviders(t *testing.T) {
+	s, _, _ := newAdminTestServer(t, false)
+	res := do(s, adminRequest(http.MethodGet, "/api/catalog", adminTestToken, ""))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	var body struct {
+		Object string                 `json:"object"`
+		Data   []adminCatalogProvider `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Object != "list" || len(body.Data) < 5 {
+		t.Fatalf("catalog = %+v", body)
+	}
+	byID := make(map[string]adminCatalogProvider, len(body.Data))
+	for _, p := range body.Data {
+		byID[p.ID] = p
+	}
+	openai, ok := byID["openai"]
+	if !ok {
+		t.Fatal("openai missing from catalog")
+	}
+	if openai.BaseURL == "" || openai.Format == "" || openai.KeyEnv == "" || len(openai.Models) == 0 {
+		t.Errorf("openai catalog entry = %+v", openai)
+	}
+	if _, ok := byID["commandcode"]; !ok {
+		t.Error("commandcode missing from catalog")
+	}
+}
+
+func TestAdminProvidersAllIncludesCatalogAndConnectionState(t *testing.T) {
+	s, _, _ := newAdminTestServer(t, false)
+	res := do(s, adminRequest(http.MethodGet, "/api/providers?all=1", adminTestToken, ""))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	var body struct {
+		Data []adminProvider `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[string]adminProvider, len(body.Data))
+	for _, p := range body.Data {
+		byID[p.ID] = p
+	}
+	testprov, ok := byID["testprov"]
+	if !ok {
+		t.Fatal("configured provider missing")
+	}
+	if !testprov.Connected || testprov.Connections != 1 {
+		t.Errorf("testprov connection state = connected:%v count:%d", testprov.Connected, testprov.Connections)
+	}
+	openai, ok := byID["openai"]
+	if !ok {
+		t.Fatal("catalog provider missing with ?all=1")
+	}
+	if openai.Managed != "catalog" || openai.Connected || openai.Connections != 0 {
+		t.Errorf("openai = %+v", openai)
+	}
+	if openai.KeyEnv == "" || openai.BaseURL == "" {
+		t.Errorf("openai metadata incomplete: %+v", openai)
+	}
+}
+
+func TestAdminGenerateKey(t *testing.T) {
+	s, _, _ := newAdminTestServer(t, false)
+	res := do(s, adminRequest(http.MethodPost, "/api/keys/generate", adminTestToken, ""))
+	if res.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	var created adminKey
+	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(created.Key, "sk-lgllm-") || len(created.Key) < 32 {
+		t.Errorf("generated key = %q", created.Key)
+	}
+	if created.ID == "" || created.Source != "admin" {
+		t.Errorf("generated metadata = %+v", created)
+	}
+
+	list := do(s, adminRequest(http.MethodGet, "/api/keys", adminTestToken, ""))
+	if strings.Contains(list.Body.String(), created.Key) {
+		t.Error("GET /api/keys leaked the generated plaintext key")
+	}
+	if !strings.Contains(list.Body.String(), created.ID) {
+		t.Errorf("generated key id missing from list: %s", list.Body)
+	}
+}
+
 func TestAdminProviderCrud(t *testing.T) {
 	s, _, _ := newAdminTestServer(t, false)
 

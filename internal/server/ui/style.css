@@ -47,6 +47,8 @@ button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button.active { border-color: var(--accent); color: var(--accent); }
 button.danger { color: var(--danger); }
+button.primary { border-color: var(--accent); color: var(--accent); }
+button.small { padding: 2px 7px; font-size: 12px; }
 nav { display: flex; gap: 6px; flex-wrap: wrap; }
 .token { display: flex; gap: 6px; margin-left: auto; align-items: center; }
 
@@ -78,6 +80,48 @@ dialog { background: var(--panel); color: var(--text); border: 1px solid var(--l
 dialog::backdrop { background: #000a; }
 dialog textarea { width: 100%; min-height: 260px; resize: vertical; }
 dialog menu { display: flex; gap: 8px; justify-content: flex-end; padding: 0; margin-top: 12px; }
+
+.form-dialog { width: min(880px, 96vw); max-height: 90vh; overflow: auto; }
+.modal-form { display: flex; flex-direction: column; gap: 14px; }
+.form-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.form-section legend { color: var(--accent); padding: 0 6px; }
+.form-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field-label { color: var(--muted); font-size: 12px; }
+.field-hint { color: var(--muted); font-size: 12px; }
+.field input, .field select { width: 100%; }
+.check { display: flex; align-items: center; gap: 6px; }
+.rows { display: flex; flex-direction: column; gap: 6px; }
+.row-editor { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(160px, 2fr) auto; gap: 6px; }
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 2fr) minmax(120px, 1.5fr) 90px minmax(110px, 1fr) auto;
+  gap: 6px;
+}
+.member-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto auto; gap: 6px; }
+.row-add { display: flex; gap: 6px; align-items: center; }
+.row-add input { flex: 1; }
+.key-output {
+  width: 100%;
+  background: #10141b;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+}
+.warn { color: #e0af68; }
+.small { font-size: 12px; }
 
 pre { background: #10141b; border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; }
 
