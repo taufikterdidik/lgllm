@@ -6,14 +6,15 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–23 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–24 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
 per-key rate limits, an admin REST API with an embedded web UI, packaging
 benchmarks, a per-model TTFT/latency/TPS dashboard, client-abort classification,
 a model-detail endpoint with combo context windows, a form-based admin UI with
-generated client keys, bbolt-backed performance history, and app/favicon assets.
+generated and named client keys, bbolt-backed performance history, and
+app/favicon assets.
 9Router parity is not the goal; see
 [`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each phase
 deliberately leaves out.
@@ -233,8 +234,8 @@ keys. Without a token it is loopback-only and a public bind is refused.
 | `/api/catalog` | `GET` built-in provider definitions |
 | `/api/connections` | `GET`, `POST`; `PUT/DELETE /api/connections/{id}` |
 | `/api/combos` | `GET`, `POST`; `PUT/DELETE /api/combos/{name}` |
-| `/api/keys` | `GET`, `POST`; `DELETE /api/keys/{id}` |
-| `/api/keys/generate` | `POST`; returns a new `sk-lgllm-...` key once |
+| `/api/keys` | `GET`, `POST`; `PUT/DELETE /api/keys/{id}` |
+| `/api/keys/generate` | `POST` with optional `{ "name": "..." }`; returns a new `sk-lgllm-...` key once |
 | `/api/usage?from=&to=&group=provider\|model\|day` | `GET` |
 | `/api/performance?provider=` | `GET` (recent TTFT/latency/TPS per model) |
 | `/api/logs?limit=N` | `GET` |
@@ -268,8 +269,10 @@ Providers, connections, and combos are configured with forms, not raw JSON:
 choose a built-in catalog entry (or a custom endpoint), edit headers and models,
 pick a provider from a dropdown for a connection, and build combo members from
 the model list. Keys has a **Generate key** action that creates a random
-`sk-lgllm-...` value, shows it once, and copies it to the clipboard; only the
-hash prefix is listed afterwards. Config-managed entries remain read-only.
+`sk-lgllm-...` value with an optional user-facing name, shows it once, and copies
+it to the clipboard; only the name and hash prefix are listed afterwards, and
+admin keys can be renamed without changing the secret. Config-managed entries
+remain read-only.
 
 ### Observability
 

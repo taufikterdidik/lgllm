@@ -50,6 +50,10 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 		!strings.Contains(js.Body.String(), "Generate key") {
 		t.Error("app.js does not expose key generation")
 	}
+	if !strings.Contains(js.Body.String(), "Rename") ||
+		!strings.Contains(js.Body.String(), "openGenerateKeyForm") {
+		t.Error("app.js does not expose key names and rename")
+	}
 	if !strings.Contains(js.Body.String(), "ctx min") || !strings.Contains(js.Body.String(), "fmtContext") {
 		t.Error("app.js does not show the combo context window")
 	}

@@ -1612,6 +1612,45 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 24. Nama untuk client key — ✅ SELESAI
+
+> Status: key admin sekarang punya nama opsional yang bisa diisi saat create,
+> generate, atau rename. Key lama tetap terbaca dengan nama kosong; secret dan
+> hash ID tidak berubah.
+
+### 24a. Keputusan implementasi — ✅ SELESAI
+
+- **Schema.** `config.AdminState.Keys` berubah dari `[]string` menjadi
+  `[]config.AdminKey{Key, Name}`. `AdminKey.UnmarshalYAML` menerima bentuk lama
+  `- sk-...` maupun bentuk baru `- key: ... name: ...`, sehingga tidak perlu
+  migrasi manual.
+- **Enkripsi.** `SaveAdminState` tetap mengenkripsi `AdminKey.Key`; nama tidak
+  dienkripsi karena bukan rahasia. `decryptState` memetakan key kembali ke
+  entry-nya.
+- **Validasi nama.** Nama optional, di-trim, maksimal 64 karakter, tanpa control
+  character, dan unik antar admin key (case-insensitive). Nama kosong berarti
+  `unnamed`.
+- **API.** `GET /api/keys` mengembalikan `name`; `POST /api/keys` menerima
+  `{key,name}`; `POST /api/keys/generate` menerima nama opsional;
+  `PUT /api/keys/{id}` untuk rename. `DELETE` tetap memakai hash ID.
+- **UI.** Tabel Keys menampilkan `name`, hash ID, source, dan aksi Rename/Delete.
+  Generate key membuka form nama terlebih dahulu, lalu menampilkan secret sekali.
+  Add existing key juga punya field nama.
+- **Config keys.** Key dari `config.yaml` tetap read-only dan tidak punya nama.
+- **Verifikasi.** Test load format lama, round-trip nama, enkripsi, duplicate
+  name, rename, API create/generate/rename/delete, dan UI statis.
+
+### 24b. Belum masuk fase 24
+
+- **Nama untuk config key.** Key dari file utama belum bisa diberi label lewat
+  overlay.
+- **Nama di usage/log.** Usage masih mengelompokkan berdasarkan hash; belum
+  memetakan name ke laporan.
+- **Tag/expiry.** Belum ada label ganda, tanggal kedaluwarsa, atau deskripsi.
+- **Per-key policy.** Belum ada limit berbeda per nama/key.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1639,6 +1678,7 @@ jujur tanpa menambah lapisan routing baru.
 | 21 | Ikon aplikasi + favicon | 0,5 hari | ✅ favicon, apple-touch-icon, manifest |
 | 22 | Context combo + endpoint model OpenRouter | 1 hari | ✅ `/v1/model/{model}` + ctx minimum |
 | 23 | Persistensi performance bbolt + ring | 1 hari | ✅ write-behind queue + reload saat restart |
+| 24 | Nama client key | 0,5 hari | ✅ name + rename + legacy admin.yaml |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

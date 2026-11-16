@@ -209,7 +209,7 @@ func TestAdminProvidersAllIncludesCatalogAndConnectionState(t *testing.T) {
 
 func TestAdminGenerateKey(t *testing.T) {
 	s, _, _ := newAdminTestServer(t, false)
-	res := do(s, adminRequest(http.MethodPost, "/api/keys/generate", adminTestToken, ""))
+	res := do(s, adminRequest(http.MethodPost, "/api/keys/generate", adminTestToken, `{"name":"generated-key"}`))
 	if res.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
 	}
@@ -220,7 +220,7 @@ func TestAdminGenerateKey(t *testing.T) {
 	if !strings.HasPrefix(created.Key, "sk-lgllm-") || len(created.Key) < 32 {
 		t.Errorf("generated key = %q", created.Key)
 	}
-	if created.ID == "" || created.Source != "admin" {
+	if created.ID == "" || created.Source != "admin" || created.Name != "generated-key" {
 		t.Errorf("generated metadata = %+v", created)
 	}
 
@@ -228,8 +228,8 @@ func TestAdminGenerateKey(t *testing.T) {
 	if strings.Contains(list.Body.String(), created.Key) {
 		t.Error("GET /api/keys leaked the generated plaintext key")
 	}
-	if !strings.Contains(list.Body.String(), created.ID) {
-		t.Errorf("generated key id missing from list: %s", list.Body)
+	if !strings.Contains(list.Body.String(), created.ID) || !strings.Contains(list.Body.String(), `"name":"generated-key"`) {
+		t.Errorf("generated key id/name missing from list: %s", list.Body)
 	}
 }
 
@@ -320,7 +320,7 @@ func TestAdminComboAndKeyCrud(t *testing.T) {
 		t.Errorf("combo delete status = %d", del.Code)
 	}
 
-	key := do(s, adminRequest(http.MethodPost, "/api/keys", adminTestToken, `{"key":"sk-admin-created-1"}`))
+	key := do(s, adminRequest(http.MethodPost, "/api/keys", adminTestToken, `{"key":"sk-admin-created-1","name":"laptop"}`))
 	if key.Code != http.StatusCreated {
 		t.Fatalf("key create status = %d, body = %s", key.Code, key.Body)
 	}
@@ -329,8 +329,16 @@ func TestAdminComboAndKeyCrud(t *testing.T) {
 		t.Fatal(err)
 	}
 	list := do(s, adminRequest(http.MethodGet, "/api/keys", adminTestToken, ""))
-	if !strings.Contains(list.Body.String(), created.ID) {
-		t.Errorf("key id missing from list: %s", list.Body)
+	if !strings.Contains(list.Body.String(), created.ID) || !strings.Contains(list.Body.String(), `"name":"laptop"`) {
+		t.Errorf("key id/name missing from list: %s", list.Body)
+	}
+	rename := do(s, adminRequest(http.MethodPut, "/api/keys/"+created.ID, adminTestToken, `{"name":"workstation"}`))
+	if rename.Code != http.StatusOK {
+		t.Fatalf("key rename status = %d, body = %s", rename.Code, rename.Body)
+	}
+	list = do(s, adminRequest(http.MethodGet, "/api/keys", adminTestToken, ""))
+	if !strings.Contains(list.Body.String(), `"name":"workstation"`) {
+		t.Errorf("renamed key missing from list: %s", list.Body)
 	}
 	if del := do(s, adminRequest(http.MethodDelete, "/api/keys/"+created.ID, adminTestToken, "")); del.Code != http.StatusNoContent {
 		t.Errorf("key delete status = %d, body = %s", del.Code, del.Body)

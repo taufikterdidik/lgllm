@@ -330,14 +330,47 @@ func (m *Manager) DeleteCombo(name string) error {
 	})
 }
 
-// AddKey appends a client key to the overlay.
+// AddKey appends a client key without a human label.
 func (m *Manager) AddKey(key string) error {
+	return m.AddKeyNamed(key, "")
+}
+
+// AddKeyNamed appends a client key with an optional unique label.
+func (m *Manager) AddKeyNamed(key, name string) error {
 	if len(key) < 8 {
 		return errors.New("api key must be at least 8 characters")
 	}
+	name, err := normalizeKeyName(name)
+	if err != nil {
+		return err
+	}
 	return m.Mutate(func(st *config.AdminState) error {
-		st.Keys = append(st.Keys, key)
+		if keyNameTaken(st.Keys, name, "") {
+			return fmt.Errorf("key name %q is already in use", name)
+		}
+		st.Keys = append(st.Keys, config.AdminKey{Key: key, Name: name})
 		return nil
+	})
+}
+
+// RenameKey changes the human label of an admin key without touching its secret.
+func (m *Manager) RenameKey(id, name string) error {
+	name, err := normalizeKeyName(name)
+	if err != nil {
+		return err
+	}
+	return m.Mutate(func(st *config.AdminState) error {
+		for i := range st.Keys {
+			if KeyID(st.Keys[i].Key) != id {
+				continue
+			}
+			if keyNameTaken(st.Keys, name, id) {
+				return fmt.Errorf("key name %q is already in use", name)
+			}
+			st.Keys[i].Name = name
+			return nil
+		}
+		return fmt.Errorf("key %q is not managed by the admin API", id)
 	})
 }
 
@@ -345,7 +378,7 @@ func (m *Manager) AddKey(key string) error {
 func (m *Manager) DeleteKey(id string) error {
 	return m.Mutate(func(st *config.AdminState) error {
 		for i, k := range st.Keys {
-			if KeyID(k) == id {
+			if KeyID(k.Key) == id {
 				st.Keys = append(st.Keys[:i], st.Keys[i+1:]...)
 				return nil
 			}

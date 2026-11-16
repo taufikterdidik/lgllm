@@ -153,6 +153,7 @@ type adminCombo struct {
 
 type adminKey struct {
 	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
 	Source string `json:"source"` // config|admin
 	// Key is set only in the response to POST /api/keys/generate. GET never
 	// returns plaintext keys.
@@ -579,7 +580,7 @@ func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
 		cfg := s.Admin.Config()
 		out := make([]adminKey, 0, len(state.Keys))
 		for _, k := range state.Keys {
-			out = append(out, adminKey{ID: admin.KeyID(k), Source: "admin"})
+			out = append(out, adminKey{ID: admin.KeyID(k.Key), Name: k.Name, Source: "admin"})
 		}
 		configKeys := len(cfg.Auth.Keys) - len(state.Keys)
 		if configKeys < 0 {
@@ -592,17 +593,21 @@ func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
 		})
 	case http.MethodPost:
 		var body struct {
-			Key string `json:"key"`
+			Key  string `json:"key"`
+			Name string `json:"name"`
 		}
 		if err := decodeAdminBody(r, &body); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
 			return
 		}
-		if err := s.Admin.AddKey(body.Key); err != nil {
+		name := strings.TrimSpace(body.Name)
+		if err := s.Admin.AddKeyNamed(body.Key, name); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error(), "admin_error")
 			return
 		}
-		writeJSON(w, http.StatusCreated, adminKey{ID: admin.KeyID(body.Key), Source: "admin"})
+		writeJSON(w, http.StatusCreated, adminKey{
+			ID: admin.KeyID(body.Key), Name: name, Source: "admin",
+		})
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed", "not_found")
 	}
@@ -613,37 +618,65 @@ func (s *Server) handleAdminKeyGenerate(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed", "not_found")
 		return
 	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeOptionalAdminBody(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
 	key, err := admin.GenerateKey()
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "generating key: "+err.Error(), "internal_error")
 		return
 	}
-	if err := s.Admin.AddKey(key); err != nil {
+	name := strings.TrimSpace(body.Name)
+	if err := s.Admin.AddKeyNamed(key, name); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error(), "admin_error")
 		return
 	}
 	// The plaintext key is returned exactly once; keep it out of shared caches.
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, adminKey{
-		ID: admin.KeyID(key), Source: "admin", Key: key,
+		ID: admin.KeyID(key), Name: name, Source: "admin", Key: key,
 	})
 }
 
 func (s *Server) handleAdminKey(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
+	switch r.Method {
+	case http.MethodPut:
+		id := strings.TrimPrefix(r.URL.Path, "/api/keys/")
+		if id == "" {
+			writeJSONError(w, http.StatusBadRequest, "key id is required", "invalid_request_error")
+			return
+		}
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := decodeAdminBody(r, &body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+			return
+		}
+		name := strings.TrimSpace(body.Name)
+		if err := s.Admin.RenameKey(id, name); err != nil {
+			writeJSONError(w, http.StatusConflict, err.Error(), "admin_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, adminKey{ID: id, Name: name, Source: "admin"})
+	case http.MethodDelete:
+		id := strings.TrimPrefix(r.URL.Path, "/api/keys/")
+		if id == "" {
+			writeJSONError(w, http.StatusBadRequest, "key id is required", "invalid_request_error")
+			return
+		}
+		if err := s.Admin.DeleteKey(id); err != nil {
+			writeJSONError(w, http.StatusConflict, err.Error(), "admin_error")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed", "not_found")
-		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/keys/")
-	if id == "" {
-		writeJSONError(w, http.StatusBadRequest, "key id is required", "invalid_request_error")
-		return
-	}
-	if err := s.Admin.DeleteKey(id); err != nil {
-		writeJSONError(w, http.StatusConflict, err.Error(), "admin_error")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- usage and logs ----------------------------------------------------------
@@ -931,6 +964,27 @@ func (s *Server) handleAdminTestConnection(w http.ResponseWriter, r *http.Reques
 
 func decodeAdminBody(r *http.Request, v any) error {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return fmt.Errorf("invalid JSON body: %w", err)
+	}
+	return nil
+}
+
+// decodeOptionalAdminBody accepts an absent or empty body, which lets key
+// generation stay a bodyless POST while also accepting an optional name.
+func decodeOptionalAdminBody(r *http.Request, v any) error {
+	if r.Body == nil {
+		return nil
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read request body: %w", err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return fmt.Errorf("invalid JSON body: %w", err)

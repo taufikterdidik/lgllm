@@ -150,6 +150,35 @@ func TestMutationRollsBackOnInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestKeyNames(t *testing.T) {
+	dir, base := writeBase(t, true)
+	m := newManager(t, dir, base, nil)
+	if err := m.AddKeyNamed("sk-key-one", " Laptop "); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.State().Keys[0].Name; got != "Laptop" {
+		t.Errorf("name = %q, want trimmed", got)
+	}
+	if err := m.AddKeyNamed("sk-key-two", "laptop"); err == nil {
+		t.Error("duplicate name was accepted")
+	}
+	if err := m.AddKeyNamed("sk-key-two", "ci"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RenameKey(KeyID("sk-key-one"), "workstation"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RenameKey(KeyID("sk-key-two"), "WORKSTATION"); err == nil {
+		t.Error("duplicate rename was accepted")
+	}
+	if err := m.AddKeyNamed("sk-key-three", strings.Repeat("x", 65)); err == nil {
+		t.Error("overlong name was accepted")
+	}
+	if err := m.AddKeyNamed("sk-key-three", "bad\nname"); err == nil {
+		t.Error("control character was accepted")
+	}
+}
+
 func TestGenerateKey(t *testing.T) {
 	first, err := GenerateKey()
 	if err != nil {

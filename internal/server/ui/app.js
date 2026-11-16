@@ -638,25 +638,62 @@ function openComboForm(existing, providers) {
 }
 
 function openKeyForm() {
+  const name = textInput('', { placeholder: 'laptop, ci, phone…' });
   const key = textInput('', { type: 'password', autocomplete: 'off', placeholder: 'sk-...' });
   openForm('Add existing client key', [
     formSection('Client key', [
+      formField('Name', name, 'Optional label shown in the key list.'),
       formField('API key', key, 'At least 8 characters. Prefer Generate key for a new random key.'),
     ]),
   ], async () => {
     if (!key.value.trim()) throw new Error('API key is required');
-    await api('/api/keys', { method: 'POST', body: JSON.stringify({ key: key.value.trim() }) });
+    await api('/api/keys', {
+      method: 'POST',
+      body: JSON.stringify({ key: key.value.trim(), name: name.value.trim() }),
+    });
     await render();
   }, 'Add key');
 }
 
+function openGenerateKeyForm() {
+  const name = textInput('', { placeholder: 'laptop, ci, phone…' });
+  openForm('Generate client key', [
+    formSection('Client key', [
+      formField('Name', name, 'Optional label shown in the key list.'),
+    ]),
+  ], async () => {
+    const created = await api('/api/keys/generate', {
+      method: 'POST',
+      body: JSON.stringify({ name: name.value.trim() }),
+    });
+    await render();
+    setTimeout(() => showGeneratedKey(created), 0);
+  }, 'Generate key');
+}
+
+function openRenameKeyForm(key) {
+  const name = textInput(key.name || '');
+  openForm('Rename client key', [
+    formSection('Client key', [
+      formField('Name', name, 'Leave empty to clear the label.'),
+    ]),
+  ], async () => {
+    await api('/api/keys/' + encodeURIComponent(key.id), {
+      method: 'PUT',
+      body: JSON.stringify({ name: name.value.trim() }),
+    });
+    await render();
+  }, 'Save name');
+}
+
 function showGeneratedKey(created) {
   const output = textInput(created.key, { readonly: 'readonly', class: 'key-output' });
-  openInfo('Client key generated', [
+  const content = [
     el('p', { class: 'warn', text: 'Copy this key now. It is shown once and is never returned by GET /api/keys.' }),
-    output,
-    el('div', { class: 'toolbar' }, [copyButton(created.key)]),
-  ]);
+  ];
+  if (created.name) content.push(el('p', { class: 'muted', text: 'Name: ' + created.name }));
+  content.push(output, el('div', { class: 'toolbar' }, [copyButton(created.key)]));
+  openInfo('Client key generated', content);
 }
 
 function testConnection(provider, connection, model) {
@@ -841,37 +878,37 @@ async function renderCombos() {
 
 async function renderKeys() {
   const payload = await api('/api/keys');
-  const rows = payload.keys.map((k) => [
-    k.id,
-    badge(k.source, 'admin'),
-    k.source === 'admin'
-      ? el('button', {
+  const rows = payload.keys.map((k) => {
+    const actions = [];
+    if (k.source === 'admin') {
+      actions.push(el('button', {
+        class: 'small', text: 'Rename',
+        onclick: () => openRenameKeyForm(k),
+      }));
+      actions.push(el('button', {
         class: 'danger small', text: 'Delete',
         onclick: async () => {
-          if (!confirm('Delete key ' + k.id + '?')) return;
+          if (!confirm('Delete key ' + (k.name || k.id) + '?')) return;
           try {
             await api('/api/keys/' + encodeURIComponent(k.id), { method: 'DELETE' });
             await render();
           } catch (err) { setStatus(err.message, 'error'); }
         },
-      })
-      : el('span', { class: 'muted', text: 'from config' }),
-  ]);
+      }));
+    } else {
+      actions.push(el('span', { class: 'muted', text: 'from config' }));
+    }
+    return [
+      k.name ? el('strong', { text: k.name }) : el('span', { class: 'muted', text: 'unnamed' }),
+      k.id,
+      badge(k.source, 'admin'),
+      actions,
+    ];
+  });
 
   const generate = el('button', {
     class: 'primary', text: 'Generate key',
-    onclick: async () => {
-      generate.disabled = true;
-      try {
-        const created = await api('/api/keys/generate', { method: 'POST' });
-        await render();
-        showGeneratedKey(created);
-      } catch (err) {
-        setStatus(err.message, 'error');
-      } finally {
-        generate.disabled = false;
-      }
-    },
+    onclick: openGenerateKeyForm,
   });
   const add = el('button', { text: 'Add existing key', onclick: openKeyForm });
 
@@ -880,10 +917,10 @@ async function renderKeys() {
     el('div', { class: 'toolbar' }, [
       generate,
       add,
-      el('span', { class: 'muted', text: 'Generated keys are shown once; only a hash prefix is stored for listing.' }),
+      el('span', { class: 'muted', text: 'Names are labels only; generated keys are shown once and listed by hash prefix.' }),
     ]),
     el('p', { class: 'muted', text: 'config keys: ' + payload.config_keys }),
-    table(['id', 'source', 'actions'], rows),
+    table(['name', 'id', 'source', 'actions'], rows),
   );
 }
 

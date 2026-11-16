@@ -19,7 +19,7 @@ func TestSaveAndLoadAdminState(t *testing.T) {
 		}},
 		Connections: []Connection{{ID: "c", Provider: "p", APIKey: "sk-secret"}},
 		Combos:      []Combo{{Name: "combo", Members: []string{"p/m"}}},
-		Keys:        []string{"sk-admin-key"},
+		Keys:        []AdminKey{{Key: "sk-admin-key", Name: "laptop"}},
 	}
 	if err := SaveAdminState(path, st, nil); err != nil {
 		t.Fatal(err)
@@ -42,6 +42,33 @@ func TestSaveAndLoadAdminState(t *testing.T) {
 	if got.Connections[0].APIKey != "sk-secret" {
 		t.Errorf("key = %q", got.Connections[0].APIKey)
 	}
+	if len(got.Keys) != 1 || got.Keys[0].Name != "laptop" {
+		t.Errorf("keys = %+v", got.Keys)
+	}
+}
+
+func TestLoadAdminStateLegacyKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "admin.yaml")
+	if err := os.WriteFile(path, []byte("keys:\n  - sk-legacy-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := LoadAdminState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Keys) != 1 || st.Keys[0].Key != "sk-legacy-key" || st.Keys[0].Name != "" {
+		t.Fatalf("legacy keys = %+v", st.Keys)
+	}
+}
+
+func TestLoadAdminStateRejectsUnknownKeyField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "admin.yaml")
+	if err := os.WriteFile(path, []byte("keys:\n  - key: sk-key\n    secret: nope\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAdminState(path); err == nil {
+		t.Fatal("unknown key field was accepted")
+	}
 }
 
 func TestSaveAdminStateEncrypts(t *testing.T) {
@@ -53,7 +80,7 @@ func TestSaveAdminStateEncrypts(t *testing.T) {
 	}
 	st := &AdminState{
 		Connections: []Connection{{ID: "c", Provider: "p", APIKey: "sk-secret"}},
-		Keys:        []string{"sk-admin-key"},
+		Keys:        []AdminKey{{Key: "sk-admin-key", Name: "laptop"}},
 		Providers: []Provider{{
 			ID: "p", Headers: map[string]string{"x-api-key": "header-secret"},
 		}},
@@ -78,6 +105,9 @@ func TestSaveAdminStateEncrypts(t *testing.T) {
 	}
 	if !secret.IsEncrypted(got.Providers[0].Headers["x-api-key"]) {
 		t.Error("header is not encrypted")
+	}
+	if !secret.IsEncrypted(got.Keys[0].Key) {
+		t.Error("client key is not encrypted")
 	}
 }
 
@@ -130,7 +160,7 @@ providers:
 		Providers:   []Provider{{ID: "extra", BaseURL: "https://extra.example/v1", Format: "openai"}},
 		Connections: []Connection{{ID: "extra-c", Provider: "extra"}},
 		Combos:      []Combo{{Name: "extra-combo", Members: []string{"extra/m"}}},
-		Keys:        []string{"admin-key-1"},
+		Keys:        []AdminKey{{Key: "admin-key-1"}},
 	}
 	if err := MergeAdminState(cfg, st); err != nil {
 		t.Fatal(err)

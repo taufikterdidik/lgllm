@@ -22,7 +22,44 @@ type AdminState struct {
 	Providers   []Provider   `yaml:"providers,omitempty"`
 	Connections []Connection `yaml:"connections,omitempty"`
 	Combos      []Combo      `yaml:"combos,omitempty"`
-	Keys        []string     `yaml:"keys,omitempty"`
+	Keys        []AdminKey   `yaml:"keys,omitempty"`
+}
+
+// AdminKey is one client key created through the admin API. Name is optional and
+// only for humans; authentication still uses Key. The YAML decoder also accepts
+// the legacy scalar form (`- sk-...`) so existing admin.yaml files keep working.
+type AdminKey struct {
+	Key  string `yaml:"key"`
+	Name string `yaml:"name,omitempty"`
+}
+
+// UnmarshalYAML accepts both the new mapping and the legacy scalar shape.
+func (k *AdminKey) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		k.Key = node.Value
+		return nil
+	case yaml.MappingNode:
+		for i := 0; i < len(node.Content); i += 2 {
+			switch node.Content[i].Value {
+			case "key", "name":
+			default:
+				return fmt.Errorf("admin key: unknown field %q", node.Content[i].Value)
+			}
+		}
+		var raw struct {
+			Key  string `yaml:"key"`
+			Name string `yaml:"name"`
+		}
+		if err := node.Decode(&raw); err != nil {
+			return err
+		}
+		k.Key = raw.Key
+		k.Name = raw.Name
+		return nil
+	default:
+		return fmt.Errorf("admin key must be a string or a mapping")
+	}
 }
 
 // Clone returns a deep copy safe to mutate.
@@ -34,7 +71,7 @@ func (s *AdminState) Clone() *AdminState {
 		Providers:   append([]Provider(nil), s.Providers...),
 		Connections: append([]Connection(nil), s.Connections...),
 		Combos:      append([]Combo(nil), s.Combos...),
-		Keys:        append([]string(nil), s.Keys...),
+		Keys:        append([]AdminKey(nil), s.Keys...),
 	}
 	for i := range out.Providers {
 		out.Providers[i].Headers = copyStrings(out.Providers[i].Headers)
@@ -154,9 +191,9 @@ func MergeAdminState(c *Config, st *AdminState) error {
 		seenKeys[k] = true
 	}
 	for _, k := range st.Keys {
-		if !seenKeys[k] {
-			seenKeys[k] = true
-			c.Auth.Keys = append(c.Auth.Keys, k)
+		if !seenKeys[k.Key] {
+			seenKeys[k.Key] = true
+			c.Auth.Keys = append(c.Auth.Keys, k.Key)
 		}
 	}
 	return nil
@@ -192,11 +229,11 @@ func SaveAdminState(path string, st *AdminState, box *secret.Box) error {
 			cp.Connections[i].APIKey = v
 		}
 		for i := range cp.Keys {
-			v, err := encrypt(cp.Keys[i])
+			v, err := encrypt(cp.Keys[i].Key)
 			if err != nil {
 				return err
 			}
-			cp.Keys[i] = v
+			cp.Keys[i].Key = v
 		}
 		for i := range cp.Providers {
 			for k, v := range cp.Providers[i].Headers {
