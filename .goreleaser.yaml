@@ -42,6 +42,7 @@ archives:
     files:
       - LICENSE
       - README.md
+      - icon.png
       - config.example.yaml
       - docs/PLAN.md
       - docs/BENCH.md
@@ -84,6 +85,8 @@ nfpms:
       - src: config.example.yaml
         dst: /etc/lgllm/config.example.yaml
         type: config|noreplace
+      - src: icon.png
+        dst: /usr/share/icons/hicolor/512x512/apps/lgllm.png
     scripts:
       postinstall: deploy/package-postinstall.sh
 

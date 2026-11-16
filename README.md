@@ -1,17 +1,19 @@
 # lgllm
 
+<img src="icon.png" alt="lgllm" width="88" align="right">
+
 Lightweight Go reimplementation of the core of [9Router](https://github.com/decolua/9router):
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–20 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–21 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
 per-key rate limits, an admin REST API with an embedded web UI, packaging
 benchmarks, a per-model TTFT/latency/TPS dashboard, client-abort classification,
-a model-detail endpoint, and a form-based admin UI with generated client keys.
-9Router parity is not the goal; see
+a model-detail endpoint, a form-based admin UI with generated client keys, and
+app/favicon assets. 9Router parity is not the goal; see
 [`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each phase
 deliberately leaves out.
 
@@ -59,7 +61,7 @@ config, and the systemd unit. The container image runs as UID 65532 and uses
 [`docs/RELEASE.md`](docs/RELEASE.md).
 
 The Docker image is `scratch` + the static binary, CA certificates and tzdata:
-9.0 MB in the release check. It listens on `0.0.0.0:20128` inside the container;
+about 9 MB in the release check. It listens on `0.0.0.0:20128` inside the container;
 publish it only on loopback or behind your own TLS/auth boundary, and set
 `auth.mode: required` before exposing it beyond localhost. A systemd unit and
 package post-install script live in [`deploy/`](deploy/), and release archives are

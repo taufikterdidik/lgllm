@@ -1491,6 +1491,37 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 21. Ikon aplikasi dan favicon dashboard — ✅ SELESAI
+
+> Status: ikon sumber 1254×1254 dipakai sebagai ikon proyek, favicon dashboard,
+> apple-touch-icon, ikon PWA, ikon paket Linux, dan logo kecil di header UI.
+
+### 21a. Keputusan implementasi — ✅ SELESAI
+
+- **Satu sumber, beberapa ukuran.** `icon.png` 512×512 menjadi ikon aplikasi di
+  root repo; turunannya `favicon-32.png`, `apple-touch-icon.png`,
+  `icon-192.png`, dan `icon-512.png` masuk ke aset UI yang di-embed.
+- **Dashboard.** `index.html` memuat favicon, apple-touch-icon, manifest PWA,
+  `theme-color`, dan logo di header. Manifest menyediakan nama, warna tema, dan
+  ikon 192/512.
+- **Distribusi.** Arsip GoReleaser memuat `icon.png`; paket deb/rpm/apk memasang
+  ikon ke `/usr/share/icons/hicolor/512x512/apps/lgllm.png`.
+- **CSP tetap ketat.** `img-src 'self' data:` sudah mengizinkan aset lokal tanpa
+  membuka sumber eksternal.
+- **Verifikasi.** Test UI memeriksa link favicon/manifest/logo dan endpoint
+  `/ui/favicon-32.png` serta `/ui/manifest.json`; aset tetap tersaji dari embed.
+
+### 21b. Belum masuk fase 21
+
+- **Ikon executable.** Binary Linux tidak membawa ikon embedded; ikon hanya
+  tersedia di UI, arsip, dan paket.
+- **Desktop entry.** Belum ada file `.desktop` yang memasangkan ikon dengan
+  aplikasi desktop.
+- **Logo gelap/terang.** Belum ada varian warna terpisah untuk tema terang.
+- **Maskable icon.** Ikon PWA belum diuji dengan safe area maskable.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1515,6 +1546,7 @@ jujur tanpa menambah lapisan routing baru.
 | 18 | Endpoint detail model | 0,5 hari | ✅ `GET /v1/models/{model...}` |
 | 19 | Proses rilis | 1 hari | ✅ workflow tag → artifacts + image + release |
 | 20 | UI form provider/connection/combo + generate key | 2 hari | ✅ katalog, form, copy-once key |
+| 21 | Ikon aplikasi + favicon | 0,5 hari | ✅ favicon, apple-touch-icon, manifest |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

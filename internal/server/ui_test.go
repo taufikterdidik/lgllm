@@ -53,6 +53,29 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 	if !strings.Contains(page.Body.String(), `data-tab="performance"`) {
 		t.Error("index does not have a performance tab")
 	}
+	for _, want := range []string{`rel="icon"`, `apple-touch-icon`, `manifest.json`, `brand-icon`} {
+		if !strings.Contains(page.Body.String(), want) {
+			t.Errorf("index does not reference %q", want)
+		}
+	}
+
+	icon := do(s, httptest.NewRequest(http.MethodGet, "/ui/favicon-32.png", nil))
+	if icon.Code != http.StatusOK {
+		t.Fatalf("favicon status = %d", icon.Code)
+	}
+	if ct := icon.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("favicon Content-Type = %q", ct)
+	}
+	if len(icon.Body.Bytes()) < 100 {
+		t.Errorf("favicon is unexpectedly small: %d bytes", icon.Body.Len())
+	}
+	manifest := do(s, httptest.NewRequest(http.MethodGet, "/ui/manifest.json", nil))
+	if manifest.Code != http.StatusOK {
+		t.Fatalf("manifest status = %d", manifest.Code)
+	}
+	if !strings.Contains(manifest.Body.String(), `"short_name": "lgllm"`) {
+		t.Errorf("manifest body = %s", manifest.Body)
+	}
 
 	// /ui redirects to /ui/.
 	redirect := do(s, httptest.NewRequest(http.MethodGet, "/ui", nil))
