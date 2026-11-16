@@ -127,7 +127,7 @@ type adminCatalogProvider struct {
 	AuthParam     string            `json:"auth_param,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
 	SessionHeader string            `json:"session_header,omitempty"`
-	Models        []string          `json:"models,omitempty"`
+	Models        []adminModel      `json:"models,omitempty"`
 	KeyEnv        string            `json:"key_env,omitempty"`
 	Site          string            `json:"site,omitempty"`
 }
@@ -142,11 +142,13 @@ type adminConnection struct {
 }
 
 type adminCombo struct {
-	Name       string   `json:"name"`
-	Members    []string `json:"members"`
-	Strategy   string   `json:"strategy,omitempty"`
-	TokenSaver *bool    `json:"token_saver,omitempty"`
-	Managed    string   `json:"managed"`
+	Name          string   `json:"name"`
+	Members       []string `json:"members"`
+	Strategy      string   `json:"strategy,omitempty"`
+	TokenSaver    *bool    `json:"token_saver,omitempty"`
+	ContextLength int      `json:"context_length,omitempty"`
+	ContextKnown  bool     `json:"context_known"`
+	Managed       string   `json:"managed"`
 }
 
 type adminKey struct {
@@ -196,7 +198,7 @@ func catalogProviderDTO(b registry.Builtin) adminProvider {
 		}
 	}
 	for _, m := range b.Models {
-		out.Models = append(out.Models, adminModel{ID: m})
+		out.Models = append(out.Models, adminModel{ID: m, Context: b.Contexts[m]})
 	}
 	return out
 }
@@ -257,11 +259,15 @@ func (s *Server) handleAdminCatalog(w http.ResponseWriter, r *http.Request) {
 	builtins := registry.Catalog()
 	out := make([]adminCatalogProvider, 0, len(builtins))
 	for _, b := range builtins {
+		models := make([]adminModel, 0, len(b.Models))
+		for _, m := range b.Models {
+			models = append(models, adminModel{ID: m, Context: b.Contexts[m]})
+		}
 		out = append(out, adminCatalogProvider{
 			ID: b.ID, Alias: b.Alias, Name: b.Name, BaseURL: b.BaseURL,
 			Format: b.Format, Auth: b.Auth, AuthParam: b.AuthParam,
 			Headers: b.Headers, SessionHeader: b.SessionHeader,
-			Models: b.Models, KeyEnv: b.KeyEnv, Site: b.Site,
+			Models: models, KeyEnv: b.KeyEnv, Site: b.Site,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": out})
@@ -491,12 +497,18 @@ func (s *Server) handleAdminCombos(w http.ResponseWriter, r *http.Request) {
 			managed[c.Name] = true
 		}
 		out := make([]adminCombo, 0, len(cfg.Combos))
+		reg := s.Registry()
 		for _, c := range cfg.Combos {
 			source := "config"
 			if managed[c.Name] {
 				source = "admin"
 			}
-			out = append(out, comboDTO(c, source))
+			dto := comboDTO(c, source)
+			if info, err := s.modelContextInfoFor(reg, c.Name); err == nil {
+				dto.ContextLength = info.Context
+				dto.ContextKnown = info.Known
+			}
+			out = append(out, dto)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": out})
 	case http.MethodPost:

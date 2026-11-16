@@ -57,6 +57,9 @@ type Builtin struct {
 	// per-conversation id. Empty means the provider needs none.
 	SessionHeader string
 	Models        []string
+	// Contexts optionally records known context windows for catalog models.
+	// Missing entries mean "unknown", not zero tokens.
+	Contexts map[string]int
 	// KeyEnv is the conventional environment variable for the API key.
 	KeyEnv string
 	Site   string
@@ -177,6 +180,10 @@ var catalog = []Builtin{
 			"xai/grok-4.7",
 			"mistral/mistral-large-4",
 		},
+		Contexts: map[string]int{
+			"deepseek/deepseek-v4.1-flash": 1_000_000,
+			"deepseek/deepseek-v4-flash":   1_000_000,
+		},
 		KeyEnv: "COMMAND_CODE_API_KEY", Site: "https://commandcode.ai/docs/provider",
 	},
 	{
@@ -282,6 +289,9 @@ var catalog = []Builtin{
 			"hy4-preview",
 			"hy3",
 			"step-5-preview",
+		},
+		Contexts: map[string]int{
+			"deepseek-v4.1-flash": 1_000_000,
 		},
 		KeyEnv: "OPENCODE_GO_API_KEY", Site: "https://opencode.ai/docs/go",
 	},
@@ -396,7 +406,11 @@ func fromCatalog(b Builtin) config.Provider {
 		}
 	}
 	for _, m := range b.Models {
-		p.Models = append(p.Models, config.Model{ID: m, Name: m})
+		model := config.Model{ID: m, Name: m}
+		if context := b.Contexts[m]; context > 0 {
+			model.Context = context
+		}
+		p.Models = append(p.Models, model)
 	}
 	return p
 }

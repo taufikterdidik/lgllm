@@ -119,6 +119,11 @@ type modelObject struct {
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	OwnedBy string `json:"owned_by"`
+	// ContextLength is the effective input window. For a combo it is the
+	// smallest known member; ContextKnown is false when any member is unknown.
+	ContextLength int  `json:"context_length,omitempty"`
+	ContextWindow int  `json:"context_window,omitempty"`
+	ContextKnown  bool `json:"context_known"`
 }
 
 // modelRef is the client-facing model id: provider alias (or id) plus the
@@ -142,12 +147,18 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	data := make([]modelObject, 0, 16)
 	for _, p := range reg.Providers() {
 		for _, m := range p.Models {
-			data = append(data, modelObject{
+			obj := modelObject{
 				ID:      modelRef(p, m),
 				Object:  "model",
 				Created: 0,
 				OwnedBy: p.ID,
-			})
+			}
+			if m.Context > 0 {
+				obj.ContextLength = m.Context
+				obj.ContextWindow = m.Context
+				obj.ContextKnown = true
+			}
+			data = append(data, obj)
 		}
 	}
 
@@ -155,20 +166,32 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	// this list can still use them. They are appended after the concrete models
 	// because owned_by has no single answer for a combo.
 	for _, a := range reg.Aliases() {
-		data = append(data, modelObject{
+		obj := modelObject{
 			ID:      a.Name,
 			Object:  "model",
 			Created: 0,
 			OwnedBy: a.Target.Provider.ID,
-		})
+		}
+		if context, known := contextForTarget(a.Target); known {
+			obj.ContextLength = context
+			obj.ContextWindow = context
+			obj.ContextKnown = true
+		}
+		data = append(data, obj)
 	}
 	for _, c := range reg.Combos() {
-		data = append(data, modelObject{
+		obj := modelObject{
 			ID:      c.Name,
 			Object:  "model",
 			Created: 0,
 			OwnedBy: "combo",
-		})
+		}
+		if context := contextForCombo(c); context.Known {
+			obj.ContextLength = context.Context
+			obj.ContextWindow = context.Context
+			obj.ContextKnown = true
+		}
+		data = append(data, obj)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -203,10 +226,56 @@ func (s *Server) handleModel(w http.ResponseWriter, r *http.Request) {
 	if target.Combo != "" {
 		ownedBy = "combo"
 	}
-	writeJSON(w, http.StatusOK, modelObject{
+	info, _ := s.modelContextInfoFor(reg, requested)
+	obj := modelObject{
 		ID:      requested,
 		Object:  "model",
 		Created: 0,
 		OwnedBy: ownedBy,
-	})
+	}
+	if info.Known {
+		obj.ContextLength = info.Context
+		obj.ContextWindow = info.Context
+		obj.ContextKnown = true
+	}
+	writeJSON(w, http.StatusOK, obj)
+}
+
+// handleOpenRouterModel serves GET /v1/model/{model...} and its /api alias.
+//
+// OpenRouter exposes a single-model detail under /api/v1/model/{author}/{slug},
+// while OpenAI clients use /v1/models/{id}. Supporting both shapes means a
+// client that probes the OpenRouter route does not have to special-case lgllm.
+func (s *Server) handleOpenRouterModel(w http.ResponseWriter, r *http.Request) {
+	requested := strings.Trim(strings.TrimSpace(r.PathValue("model")), "/")
+	if requested == "" {
+		writeJSONError(w, http.StatusNotFound, "model is required", "not_found")
+		return
+	}
+	reg := s.Registry()
+	target, err := reg.Lookup(requested)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, "model "+strconv.Quote(requested)+" not found", "not_found")
+		return
+	}
+	ownedBy := target.Provider.ID
+	if target.Combo != "" {
+		ownedBy = "combo"
+	}
+	info, _ := s.modelContextInfoFor(reg, requested)
+	detail := map[string]any{
+		"id":            requested,
+		"object":        "model",
+		"created":       0,
+		"owned_by":      ownedBy,
+		"context_known": info.Known,
+	}
+	if info.Known {
+		detail["context_length"] = info.Context
+		detail["context_window"] = info.Context
+	}
+	if info.Combo {
+		detail["members"] = info.Members
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": detail})
 }

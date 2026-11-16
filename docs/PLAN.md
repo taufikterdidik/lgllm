@@ -1522,6 +1522,50 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 22. Context window combo + endpoint model OpenRouter — ✅ SELESAI
+
+> Status: `GET /v1/model/{model...}` dan alias `/api/v1/model/{model...}`
+> tersedia, model detail membawa `context_length`, dan combo memakai context
+> terkecil dari membernya. `/api/show` dan `/v1/props` juga memakai nilai combo
+> yang sama.
+
+### 22a. Keputusan implementasi — ✅ SELESAI
+
+- **Penyebab 404.** Client meminta `/v1/model/dsf` (singular, gaya OpenRouter),
+  sedangkan route yang ada hanya `/v1/models/{model...}`. Route singular
+  ditambahkan sebagai compatibility alias dengan envelope `{"data": ...}`.
+- **Context combo.** `modelContextInfoFor` me-resolve model/alias/combo, lalu
+  menghitung nilai positif terkecil dari seluruh member. Combo dengan member
+  yang context-nya belum diketahui menghasilkan `context_known: false` dan tidak
+  mengiklankan angka, supaya client tidak memakai batas yang terlalu besar.
+- **Endpoint yang diperbaiki.** `/v1/models` dan `/v1/models/{model}` membawa
+  `context_length`/`context_window`; `/api/show` mengisi
+  `lgllm.context_length`; `/v1/props` mengisi `n_ctx` dengan context combo.
+- **Sumber context.** `config.models[].context` tetap otoritatif. Katalog
+  bawaan mendapat hint context untuk model yang diketahui
+  (`commandcode/deepseek/deepseek-v4.1-flash` dan
+  `opencode-go/deepseek-v4.1-flash` = 1.000.000), sehingga combo `dsf` langsung
+  terisi.
+- **UI.** Tab Combos menampilkan kolom `ctx min`, atau `unknown` bila salah satu
+  member belum punya context.
+- **Verifikasi.** Test server untuk combo 128k vs 1M, alias, member unknown,
+  `/v1/model`, `/v1/models`, `/api/show`, dan `/v1/props`; live probe combo
+  `dsf` menghasilkan 1.000.000.
+
+### 22b. Belum masuk fase 22
+
+- **Sync metadata context.** `models sync` masih mengambil id; belum menyimpan
+  `context_length` dari `/models` upstream.
+- **Context katalog lengkap.** Hanya model yang diketahui yang diberi hint;
+  model lain tetap `unknown` sampai diisi operator.
+- **Context per member di UI.** Kolom combo menampilkan min; detail per member
+  baru ada di respons API, belum di tabel UI.
+- **Model tanpa advertised metadata.** Model yang diteruskan tetapi tidak ada di
+  daftar hint tetap unknown.
+- **Nested combo.** Combo di dalam combo belum didukung resolver routing.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1547,6 +1591,7 @@ jujur tanpa menambah lapisan routing baru.
 | 19 | Proses rilis | 1 hari | ✅ workflow tag → artifacts + image + release |
 | 20 | UI form provider/connection/combo + generate key | 2 hari | ✅ katalog, form, copy-once key |
 | 21 | Ikon aplikasi + favicon | 0,5 hari | ✅ favicon, apple-touch-icon, manifest |
+| 22 | Context combo + endpoint model OpenRouter | 1 hari | ✅ `/v1/model/{model}` + ctx minimum |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

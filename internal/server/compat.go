@@ -183,8 +183,15 @@ func (s *Server) handleAPIShow(w http.ResponseWriter, r *http.Request) {
 		"lgllm.format":   p.Format,
 		"lgllm.model":    m.ID,
 	}
-	if m.Context > 0 {
-		info["lgllm.context_length"] = m.Context
+	context, err := s.modelContextInfoFor(reg, requested)
+	if err == nil && context.Known {
+		info["lgllm.context_length"] = context.Context
+		info["lgllm.context_known"] = true
+	} else {
+		info["lgllm.context_known"] = false
+	}
+	if err == nil && context.Combo {
+		info["lgllm.combo"] = true
 	}
 
 	writeJSON(w, http.StatusOK, ollamaShow{
@@ -279,13 +286,16 @@ func (s *Server) handleProps(w http.ResponseWriter, r *http.Request) {
 		vision bool
 	)
 	if requested != "" {
-		p, m, ok := findModel(reg, requested)
+		_, m, ok := findModel(reg, requested)
 		if !ok {
 			writeJSONError(w, http.StatusNotFound,
 				fmt.Sprintf("model %q not found", requested), "invalid_request_error")
 			return
 		}
-		alias, nCtx, vision = modelRef(p, m), m.Context, m.Capabilities["vision"]
+		alias, vision = requested, m.Capabilities["vision"]
+		if context, err := s.modelContextInfoFor(reg, requested); err == nil && context.Known {
+			nCtx = context.Context
+		}
 	} else if p, m, ok := defaultModel(reg); ok {
 		alias, nCtx, vision = modelRef(p, m), m.Context, m.Capabilities["vision"]
 	}

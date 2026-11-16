@@ -175,6 +175,34 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
+func TestCatalogContextHintsPropagate(t *testing.T) {
+	cfg := config.Default()
+	cfg.Connections = []config.Connection{
+		{ID: "cmd", Provider: "cmd", APIKey: "key"},
+		{ID: "ocg", Provider: "ocg", APIKey: "key"},
+	}
+	effective := Materialize(cfg.Providers, cfg.Connections)
+	find := func(providerID, modelID string) int {
+		for _, provider := range effective {
+			if provider.ID != providerID {
+				continue
+			}
+			for _, model := range provider.Models {
+				if model.ID == modelID {
+					return model.Context
+				}
+			}
+		}
+		return 0
+	}
+	if got := find("commandcode", "deepseek/deepseek-v4.1-flash"); got != 1_000_000 {
+		t.Errorf("commandcode context = %d", got)
+	}
+	if got := find("opencode-go", "deepseek-v4.1-flash"); got != 1_000_000 {
+		t.Errorf("opencode-go context = %d", got)
+	}
+}
+
 func TestValidateSessionHeader(t *testing.T) {
 	base := func() config.Config {
 		cfg := config.Default()

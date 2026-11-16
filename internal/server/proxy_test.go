@@ -339,6 +339,109 @@ func TestModelDetailUnknownProviderIs404(t *testing.T) {
 	}
 }
 
+func TestComboContextUsesSmallestMember(t *testing.T) {
+	cfg := testConfig(t, func(c *config.Config) {
+		c.Providers[0].Models[0].Context = 128000
+		c.Providers = append(c.Providers, config.Provider{
+			ID: "large", BaseURL: "https://large.invalid/v1", Format: "openai", Auth: "bearer",
+			Models: []config.Model{{ID: "big-model", Context: 1000000}},
+		})
+		c.Connections = append(c.Connections, config.Connection{
+			ID: "large-conn", Provider: "large", APIKey: "sk-large",
+		})
+		c.Combos = []config.Combo{{
+			Name: "mix", Strategy: "priority",
+			Members: []string{"testprov/test-model", "large/big-model"},
+		}}
+		c.Aliases = map[string]string{"small-alias": "testprov/test-model"}
+	})
+	s := newTestServer(t, cfg, nil)
+
+	detail := do(s, httptest.NewRequest(http.MethodGet, "/v1/model/mix", nil))
+	if detail.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, body = %s", detail.Code, detail.Body)
+	}
+	var body struct {
+		Data struct {
+			ID            string               `json:"id"`
+			ContextLength int                  `json:"context_length"`
+			ContextKnown  bool                 `json:"context_known"`
+			Members       []modelContextMember `json:"members"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(detail.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.ID != "mix" || body.Data.ContextLength != 128000 || !body.Data.ContextKnown {
+		t.Errorf("detail = %+v", body.Data)
+	}
+	if len(body.Data.Members) != 2 {
+		t.Errorf("members = %+v", body.Data.Members)
+	}
+
+	flat := do(s, httptest.NewRequest(http.MethodGet, "/v1/models/mix", nil))
+	var model modelObject
+	if err := json.Unmarshal(flat.Body.Bytes(), &model); err != nil {
+		t.Fatal(err)
+	}
+	if model.ContextLength != 128000 || !model.ContextKnown || model.OwnedBy != "combo" {
+		t.Errorf("flat = %+v", model)
+	}
+
+	list := do(s, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	if !strings.Contains(list.Body.String(), `"id":"mix"`) ||
+		!strings.Contains(list.Body.String(), `"context_length":128000`) {
+		t.Errorf("list missing combo context: %s", list.Body)
+	}
+
+	show := do(s, httptest.NewRequest(http.MethodGet, "/api/show?model=mix", nil))
+	if !strings.Contains(show.Body.String(), `"lgllm.context_length":128000`) {
+		t.Errorf("show missing combo context: %s", show.Body)
+	}
+	props := do(s, httptest.NewRequest(http.MethodGet, "/v1/props?model=mix", nil))
+	if !strings.Contains(props.Body.String(), `"n_ctx":128000`) {
+		t.Errorf("props missing combo context: %s", props.Body)
+	}
+
+	alias := do(s, httptest.NewRequest(http.MethodGet, "/v1/model/small-alias", nil))
+	if alias.Code != http.StatusOK || !strings.Contains(alias.Body.String(), `"context_length":128000`) {
+		t.Errorf("alias detail = %d %s", alias.Code, alias.Body)
+	}
+}
+
+func TestComboContextUnknownWhenMemberUnknown(t *testing.T) {
+	cfg := testConfig(t, func(c *config.Config) {
+		c.Providers[0].Models[0].Context = 128000
+		c.Providers = append(c.Providers, config.Provider{
+			ID: "unknown", BaseURL: "https://unknown.invalid/v1", Format: "openai", Auth: "bearer",
+			Models: []config.Model{{ID: "unknown-model"}},
+		})
+		c.Connections = append(c.Connections, config.Connection{
+			ID: "unknown-conn", Provider: "unknown", APIKey: "sk-unknown",
+		})
+		c.Combos = []config.Combo{{
+			Name: "partial", Members: []string{"testprov/test-model", "unknown/unknown-model"},
+		}}
+	})
+	s := newTestServer(t, cfg, nil)
+	res := do(s, httptest.NewRequest(http.MethodGet, "/v1/model/partial", nil))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	var body struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := body.Data["context_length"]; ok {
+		t.Errorf("unknown member must not advertise a numeric context: %s", res.Body)
+	}
+	if body.Data["context_known"] != false {
+		t.Errorf("missing context_known=false: %s", res.Body)
+	}
+}
+
 func TestModelsIsEmptyWithoutProviders(t *testing.T) {
 	cfg := testConfig(t, func(c *config.Config) {
 		c.Providers = nil

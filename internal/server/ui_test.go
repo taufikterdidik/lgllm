@@ -50,6 +50,9 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 		!strings.Contains(js.Body.String(), "Generate key") {
 		t.Error("app.js does not expose key generation")
 	}
+	if !strings.Contains(js.Body.String(), "ctx min") || !strings.Contains(js.Body.String(), "fmtContext") {
+		t.Error("app.js does not show the combo context window")
+	}
 	if !strings.Contains(page.Body.String(), `data-tab="performance"`) {
 		t.Error("index does not have a performance tab")
 	}

@@ -431,7 +431,10 @@ function openProviderForm(existing, catalog, providers) {
     authParam.value = entry.auth_param || '';
     sessionHeader.value = entry.session_header || '';
     headers.replace(entry.headers || {});
-    models.replace((entry.models || []).map((model) => ({ id: model })));
+    models.replace((entry.models || []).map((model) => ({
+      id: model.id || model,
+      context: model.context || 0,
+    })));
     keyHint.textContent = entry.key_env ? 'Conventional environment variable: ' + entry.key_env : '';
     syncAuthParam();
   };
@@ -811,10 +814,12 @@ async function renderCombos() {
     }
     const saver = c.token_saver === undefined || c.token_saver === null
       ? 'inherit' : (c.token_saver ? 'on' : 'off');
+    const context = c.context_known ? fmtContext(c.context_length) : 'unknown';
     return [
       c.name,
       (c.members || []).join(' → '),
       c.strategy || 'priority',
+      context,
       saver,
       badge(c.managed, c.managed === 'admin' ? 'admin' : ''),
       actions,
@@ -830,7 +835,7 @@ async function renderCombos() {
       }),
       el('span', { class: 'muted', text: 'A combo is a named list of models tried in order or round-robin.' }),
     ]),
-    table(['name', 'members', 'strategy', 'token saver', 'source', 'actions'], rows),
+    table(['name', 'members', 'strategy', 'ctx min', 'token saver', 'source', 'actions'], rows),
   );
 }
 
@@ -908,6 +913,13 @@ async function renderUsage() {
       el('span', { class: 'muted', text: 'Ring buffer only; lost on restart.' })]),
     table(['key', 'requests', 'failures', 'prompt', 'completion', 'saved bytes', 'cost'], rows),
   );
+}
+
+function fmtContext(tokens) {
+  if (!tokens) return 'unknown';
+  if (tokens >= 1000000) return (tokens / 1000000) + 'M';
+  if (tokens >= 1000) return Math.round(tokens / 1000) + 'k';
+  return String(tokens);
 }
 
 function fmtMs(value) {

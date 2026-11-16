@@ -6,14 +6,14 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–21 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–22 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
 per-key rate limits, an admin REST API with an embedded web UI, packaging
 benchmarks, a per-model TTFT/latency/TPS dashboard, client-abort classification,
-a model-detail endpoint, a form-based admin UI with generated client keys, and
-app/favicon assets. 9Router parity is not the goal; see
+a model-detail endpoint with combo context windows, a form-based admin UI with
+generated client keys, and app/favicon assets. 9Router parity is not the goal; see
 [`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each phase
 deliberately leaves out.
 
@@ -189,6 +189,8 @@ same registry, so a model name taken from them works unchanged in
 | `GET /api/v1/models` | identical to `GET /v1/models` (pure alias) |
 | `GET /v1/models/{model}` | OpenAI model object for a routable id, alias, or combo; `{model}` may contain slashes |
 | `GET /api/v1/models/{model}` | identical to `GET /v1/models/{model}` |
+| `GET /v1/model/{model}` | OpenRouter-shaped `{"data":...}` single-model detail, including context and combo members |
+| `GET /api/v1/model/{model}` | identical to `GET /v1/model/{model}` |
 | `GET /api/tags` | Ollama `ListResponse`: `{"models":[{name, model, modified_at, size, digest, details, capabilities}]}` |
 | `GET,POST /api/show` | Ollama `ShowResponse`; body `{"model":"..."}` or `?model=` |
 | `GET /v1/props` | llama.cpp `/props`: `model_alias`, `n_ctx`, `modalities`, `build_info` |
@@ -200,6 +202,13 @@ The model-detail wildcard echoes the id that was requested and accepts the same
 names as generation: provider-prefixed ids, aliases, combos, and bare names
 routed by `default_provider`. Model lists remain hints rather than an allow-list,
 so an unlisted `provider/model` still resolves.
+
+A combo reports the smallest context among its members, but only when every
+member has context metadata. If any member's context is unknown, the response
+sets `context_known: false` and omits the numeric window instead of advertising
+an unsafe limit. `/api/show` and `/v1/props` use the same effective value, so a
+client that compacts around `n_ctx` sees the combo minimum rather than the first
+member's size.
 
 They describe models; they never run one. Generation goes through
 `/v1/chat/completions`, `/v1/messages`, or the provider's native generation
