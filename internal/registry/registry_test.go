@@ -98,9 +98,21 @@ func TestCommandCodeCatalog(t *testing.T) {
 	if !containsString(chat.Models, "deepseek/deepseek-v4-flash") {
 		t.Error("a known chat model is missing")
 	}
+	for _, id := range []string{
+		"Qwen/Qwen4-Max",
+		"tencent/hy4-flash",
+		"recursive/flint-v1.0:free",
+	} {
+		if !containsString(chat.Models, id) {
+			t.Errorf("new upstream chat model %q is missing", id)
+		}
+	}
 	for _, id := range chat.Models {
 		if strings.HasPrefix(id, "claude-") {
 			t.Errorf("chat entry advertises Claude model %q, which only answers on /messages", id)
+		}
+		if chat.Contexts[id] == 0 {
+			t.Errorf("chat model %q has no context hint", id)
 		}
 	}
 
@@ -122,6 +134,9 @@ func TestCommandCodeCatalog(t *testing.T) {
 	for _, id := range claude.Models {
 		if !strings.HasPrefix(id, "claude-") {
 			t.Errorf("Claude entry advertises non-Claude model %q", id)
+		}
+		if claude.Contexts[id] == 0 {
+			t.Errorf("Claude model %q has no context hint", id)
 		}
 	}
 
@@ -179,6 +194,7 @@ func TestCatalogContextHintsPropagate(t *testing.T) {
 	cfg := config.Default()
 	cfg.Connections = []config.Connection{
 		{ID: "cmd", Provider: "cmd", APIKey: "key"},
+		{ID: "cmdc", Provider: "cmdc", APIKey: "key"},
 		{ID: "ocg", Provider: "ocg", APIKey: "key"},
 	}
 	effective := Materialize(cfg.Providers, cfg.Connections)
@@ -197,6 +213,21 @@ func TestCatalogContextHintsPropagate(t *testing.T) {
 	}
 	if got := find("commandcode", "deepseek/deepseek-v4.1-flash"); got != 1_000_000 {
 		t.Errorf("commandcode context = %d", got)
+	}
+	if got := find("commandcode", "tencent/hy4-flash"); got != 1_024_000 {
+		t.Errorf("commandcode hy4-flash context = %d, want the upstream value", got)
+	}
+	if got := find("commandcode", "Qwen/Qwen4-Max"); got != 1_000_000 {
+		t.Errorf("commandcode Qwen4-Max context = %d", got)
+	}
+	if got := find("commandcode", "recursive/flint-v1.0:free"); got != 262_144 {
+		t.Errorf("commandcode flint context = %d", got)
+	}
+	if got := find("commandcode-claude", "claude-sonnet-5-5"); got != 1_000_000 {
+		t.Errorf("commandcode-claude context = %d", got)
+	}
+	if got := find("commandcode-claude", "claude-haiku-4-5-20251001"); got != 200_000 {
+		t.Errorf("commandcode-claude haiku context = %d", got)
 	}
 	if got := find("opencode-go", "deepseek-v4.1-flash"); got != 1_000_000 {
 		t.Errorf("opencode-go context = %d", got)

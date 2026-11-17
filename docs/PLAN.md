@@ -1735,6 +1735,44 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 27. Sinkronisasi katalog Command Code — ✅ SELESAI
+
+> Status: katalog `commandcode` dan `commandcode-claude` disegarkan langsung dari
+> `GET https://api.commandcode.ai/provider/v1/models` (17 November 2026). Upstream
+> mengiklankan 101 model: 89 chat dan 12 Claude. Tiga model chat baru masuk ke
+> katalog dan context seluruh model diisi dari metadata upstream, bukan dari
+> config lokal.
+
+### 27a. Keputusan implementasi — ✅ SELESAI
+
+- **Model baru.** `Qwen/Qwen4-Max`, `tencent/hy4-flash`, dan
+  `recursive/flint-v1.0:free` ditambahkan ke urutan yang sesuai di katalog chat.
+- **Context.** Nilai diambil dari `context_length` upstream untuk seluruh 89 model
+  chat dan 12 model Claude. Contoh: `tencent/hy4-flash` = 1.024.000 (bukan
+  1.020.000 seperti config lama), `Qwen/Qwen4-Max` = 1.000.000,
+  `claude-haiku-4-5-20251001` = 200.000.
+- **Pemisahan format.** Model Claude tetap hanya ada di `commandcode-claude`
+  (`/messages`); katalog chat tidak mencampurnya.
+- **Display name.** Respons upstream juga membawa `name`, tetapi `Builtin` belum
+  punya field nama; `/v1/models` tetap memakai id sebagai nama.
+- **Test.** Test katalog memastikan tiga model baru ada, setiap model chat/Claude
+  punya context, dan context baru terpropagasi lewat `Materialize`.
+- **Verifikasi.** `models list --provider commandcode` = 89,
+  `commandcode-claude` = 12, sama dengan upstream saat pengecekan.
+
+### 27b. Belum masuk fase 27
+
+- **Katalog otomatis.** Daftar masih hard-coded; belum ada job yang mengambil
+  upstream dan membuka PR.
+- **Metadata sync.** `models sync` masih membuang `context_length` dan `name`
+  dari respons `/models`.
+- **Capabilities.** `supported_endpoints` upstream belum dipetakan ke
+  capabilities katalog.
+- **Per-akun.** Ketersediaan model per plan/akun belum dimodelkan; katalog
+  bersifat global.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1765,6 +1803,7 @@ jujur tanpa menambah lapisan routing baru.
 | 24 | Nama client key | 0,5 hari | ✅ name + rename + legacy admin.yaml |
 | 25 | Dashboard p50 | 0,5 hari | ✅ p50 UI, average tetap di API/metrics |
 | 26 | Batas konkurensi per connection | 0,5–1 hari | ✅ `max_concurrent`, fallback, 429 |
+| 27 | Sinkronisasi katalog Command Code | 0,5 hari | ✅ 3 model baru + context upstream |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.
