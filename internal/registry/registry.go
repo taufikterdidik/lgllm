@@ -752,6 +752,8 @@ type Connection struct {
 	ID      string
 	APIKey  string
 	BaseURL string
+	// MaxConcurrent caps simultaneous upstream attempts; zero is unlimited.
+	MaxConcurrent int
 }
 
 // Model is an advertised model.
@@ -845,9 +847,10 @@ func New(cfg *config.Config) (*Registry, error) {
 				continue
 			}
 			p.connections = append(p.connections, Connection{
-				ID:      cc.ID,
-				APIKey:  cc.APIKey,
-				BaseURL: strings.TrimRight(cc.BaseURL, "/"),
+				ID:            cc.ID,
+				APIKey:        cc.APIKey,
+				BaseURL:       strings.TrimRight(cc.BaseURL, "/"),
+				MaxConcurrent: cc.MaxConcurrent,
 			})
 		}
 

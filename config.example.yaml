@@ -141,6 +141,10 @@ connections:
   # - id: deepseek-main
   #   provider: deepseek
   #   api_key: ${DEEPSEEK_API_KEY}
+  #   # Optional cap on simultaneous upstream streams for this credential.
+  #   # 0 (or absent) means unlimited. A request that finds the connection full
+  #   # falls through to the next credential or combo member, then 429.
+  #   max_concurrent: 4
   #
   # Secrets can be encrypted at rest. Generate the value with
   #   printf '%s' "$DEEPSEEK_API_KEY" | lgllm -encrypt

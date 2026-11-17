@@ -140,22 +140,45 @@ func (s *Server) tryProvider(w http.ResponseWriter, r *http.Request, req *genera
 		return attemptOutcome{}
 	}
 
+	attempted := false
+	limited := 0
 	for pos, ci := range order {
 		if r.Context().Err() != nil {
 			return attemptOutcome{done: true}
 		}
 		conn := conns[ci]
+		// Take a concurrency slot for the whole upstream call, including the
+		// response body. A full connection is skipped rather than queued: the
+		// caller still has other credentials or combo members to try.
+		release, ok := s.ConnLimit.TryAcquire(conn.ID, conn.MaxConcurrent)
+		if !ok {
+			limited++
+			s.Metrics.ObserveConnectionLimited(provider.ID, conn.ID)
+			continue
+		}
+		attempted = true
 		// Peeking only matters when a fallback exists. With a single option the
 		// old behaviour wins: send the headers at once, so a client can close the
 		// body and cancel the upstream request.
 		peek := moreAttempts || pos < len(order)-1
 		done, failure := s.tryConnection(w, r, req, provider, conn, attempt.Model, outbound, peek)
+		release()
 		if done {
 			return attemptOutcome{done: true}
 		}
 		if failure != nil {
 			*failures = append(*failures, *failure)
 		}
+	}
+	if !attempted && limited > 0 {
+		// Every credential was already saturated. Report one entry per
+		// provider/model so a multi-member combo summary stays readable.
+		*failures = append(*failures, attemptFailure{
+			Provider: provider.ID,
+			Model:    attempt.Model,
+			Status:   http.StatusTooManyRequests,
+			Error:    "all credentials are at their concurrency limit",
+		})
 	}
 	return attemptOutcome{}
 }
@@ -587,7 +610,22 @@ func (s *Server) writeFailures(w http.ResponseWriter, req *generationRequest, pl
 	}
 
 	last := failures[len(failures)-1]
+	allLimited := true
+	for _, f := range failures {
+		if f.Status != http.StatusTooManyRequests {
+			allLimited = false
+			break
+		}
+	}
+	if allLimited {
+		// A slot may free when another stream finishes; asking the client to
+		// retry soon is honest and avoids a long queue inside the proxy.
+		w.Header().Set("Retry-After", "1")
+	}
 	finalStatus := http.StatusBadGateway
+	if allLimited {
+		finalStatus = http.StatusTooManyRequests
+	}
 	if len(failures) == 1 {
 		finalStatus = last.Status
 		if finalStatus == 0 {
@@ -599,6 +637,11 @@ func (s *Server) writeFailures(w http.ResponseWriter, req *generationRequest, pl
 		summary = planSummary(failures)
 	}
 	s.recordRequest(req, last.Provider, last.Model, finalStatus, 0, 0, summary)
+
+	kind := "upstream_error"
+	if allLimited {
+		kind = "rate_limit_error"
+	}
 
 	if len(failures) == 1 {
 		f := failures[0]
@@ -619,7 +662,7 @@ func (s *Server) writeFailures(w http.ResponseWriter, req *generationRequest, pl
 		if status == 0 {
 			status = http.StatusBadGateway
 		}
-		s.writeError(w, req.in, status, f.Error, "upstream_error")
+		s.writeError(w, req.in, status, f.Error, kind)
 		return
 	}
 
@@ -631,20 +674,20 @@ func (s *Server) writeFailures(w http.ResponseWriter, req *generationRequest, pl
 		len(failures), req.requested, strings.Join(parts, "; "))
 
 	if req.in == ingressAnthropic {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
+		writeJSON(w, finalStatus, map[string]any{
 			"type": "error",
 			"error": map[string]string{
-				"type":    "api_error",
+				"type":    kind,
 				"message": message,
 			},
 			"attempts": failures,
 		})
 		return
 	}
-	writeJSON(w, http.StatusBadGateway, map[string]any{
+	writeJSON(w, finalStatus, map[string]any{
 		"error": map[string]any{
 			"message": message,
-			"type":    "upstream_error",
+			"type":    kind,
 		},
 		"attempts": failures,
 	})

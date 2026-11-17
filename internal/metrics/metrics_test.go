@@ -16,6 +16,7 @@ func TestRenderCountersAndHistogram(t *testing.T) {
 	m.AddTokens("ds", "deepseek-chat", "completion", 20)
 	m.AddSavedBytes("ds", "deepseek-chat", 4096)
 	m.ObserveFailure("ds", 429)
+	m.ObserveConnectionLimited("ds", "conn-a")
 
 	var b strings.Builder
 	if err := m.Render(&b); err != nil {
@@ -33,6 +34,7 @@ func TestRenderCountersAndHistogram(t *testing.T) {
 		`lgllm_tokens_total{kind="prompt",provider="ds",model="deepseek-chat"} 100`,
 		`lgllm_token_saver_saved_bytes_total{provider="ds",model="deepseek-chat"} 4096`,
 		`lgllm_upstream_attempt_failures_total{provider="ds",status="429"} 1`,
+		`lgllm_connection_concurrency_limited_total{provider="ds",connection="conn-a"} 1`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)

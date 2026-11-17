@@ -180,6 +180,10 @@ func boolNode(v bool) *yaml.Node {
 	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: fmt.Sprintf("%t", v)}
 }
 
+func intNode(v int) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprintf("%d", v)}
+}
+
 // cloneNode deep-copies a node so a sequence can be rebuilt without sharing
 // child pointers with the old one.
 func cloneNode(n *yaml.Node) *yaml.Node {

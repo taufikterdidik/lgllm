@@ -107,6 +107,31 @@ func TestProviderAndConnectionLifecycle(t *testing.T) {
 	}
 }
 
+func TestConnectionMaxConcurrentFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	mustRun(t, path, "", "init")
+	mustRun(t, path, "", "provider", "add", "--id", "local",
+		"--base-url", "https://example.test/v1", "--format", "openai", "--auth", "bearer")
+	mustRun(t, path, "", "connection", "add", "--provider", "local", "--id", "main",
+		"--api-key", "secret", "--max-concurrent", "4")
+
+	cfg := readConfig(t, path)
+	if len(cfg.Connections) != 1 || cfg.Connections[0].MaxConcurrent != 4 {
+		t.Fatalf("connections: %+v", cfg.Connections)
+	}
+
+	mustRun(t, path, "", "connection", "set", "--id", "main", "--max-concurrent", "8")
+	if got := readConfig(t, path).Connections[0].MaxConcurrent; got != 8 {
+		t.Fatalf("max_concurrent = %d, want 8", got)
+	}
+
+	// Zero removes the cap and the field, so the YAML stays minimal.
+	mustRun(t, path, "", "connection", "set", "--id", "main", "--max-concurrent", "0")
+	if got := readConfig(t, path).Connections[0].MaxConcurrent; got != 0 {
+		t.Fatalf("max_concurrent = %d, want 0", got)
+	}
+}
+
 func TestProviderSessionHeaderFlag(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	mustRun(t, path, "", "init")

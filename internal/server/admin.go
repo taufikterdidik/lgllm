@@ -133,12 +133,13 @@ type adminCatalogProvider struct {
 }
 
 type adminConnection struct {
-	ID       string `json:"id"`
-	Provider string `json:"provider"`
-	APIKey   string `json:"api_key,omitempty"`
-	BaseURL  string `json:"base_url,omitempty"`
-	Disabled bool   `json:"disabled,omitempty"`
-	Managed  string `json:"managed"`
+	ID            string `json:"id"`
+	Provider      string `json:"provider"`
+	APIKey        string `json:"api_key,omitempty"`
+	BaseURL       string `json:"base_url,omitempty"`
+	MaxConcurrent int    `json:"max_concurrent,omitempty"`
+	Disabled      bool   `json:"disabled,omitempty"`
+	Managed       string `json:"managed"`
 }
 
 type adminCombo struct {
@@ -226,7 +227,7 @@ func connectionDTO(c config.Connection, managed string) adminConnection {
 	}
 	return adminConnection{
 		ID: c.ID, Provider: c.Provider, APIKey: key, BaseURL: c.BaseURL,
-		Disabled: c.Disabled, Managed: managed,
+		MaxConcurrent: c.MaxConcurrent, Disabled: c.Disabled, Managed: managed,
 	}
 }
 
@@ -482,7 +483,7 @@ func (s *Server) handleAdminConnection(w http.ResponseWriter, r *http.Request) {
 func connectionFromDTO(d adminConnection) config.Connection {
 	return config.Connection{
 		ID: d.ID, Provider: d.Provider, APIKey: d.APIKey,
-		BaseURL: d.BaseURL, Disabled: d.Disabled,
+		BaseURL: d.BaseURL, MaxConcurrent: d.MaxConcurrent, Disabled: d.Disabled,
 	}
 }
 

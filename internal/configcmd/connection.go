@@ -51,7 +51,7 @@ func connectionList(args []string, g globals, stdout io.Writer) error {
 		fmt.Fprintln(stdout, "no connections yet; add one with `lgllm config connection add`")
 		return nil
 	}
-	fmt.Fprintf(stdout, "%-18s %-16s %-24s %-6s %s\n", "ID", "PROVIDER", "API KEY", "STATE", "BASE URL")
+	fmt.Fprintf(stdout, "%-18s %-16s %-24s %-6s %-4s %s\n", "ID", "PROVIDER", "API KEY", "STATE", "MAX", "BASE URL")
 	for _, c := range cfg.Connections {
 		state := "on"
 		if c.Disabled {
@@ -61,8 +61,12 @@ func connectionList(args []string, g globals, stdout io.Writer) error {
 		if base == "" {
 			base = "(provider default)"
 		}
-		fmt.Fprintf(stdout, "%-18s %-16s %-24s %-6s %s\n",
-			c.ID, c.Provider, describeSecret(c.APIKey), state, base)
+		maxConcurrent := "-"
+		if c.MaxConcurrent > 0 {
+			maxConcurrent = fmt.Sprintf("%d", c.MaxConcurrent)
+		}
+		fmt.Fprintf(stdout, "%-18s %-16s %-24s %-6s %-4s %s\n",
+			c.ID, c.Provider, describeSecret(c.APIKey), state, maxConcurrent, base)
 	}
 	return nil
 }
@@ -74,6 +78,7 @@ func connectionAdd(args []string, g globals, stdin io.Reader, stdout io.Writer) 
 		id       = fs.String("id", "", "connection id (default PROVIDER-N)")
 		apiKey   = fs.String("api-key", "", "credential; use '${VAR}' to keep it in the environment")
 		baseURL  = fs.String("base-url", "", "override the provider base URL for this credential")
+		maxConc  = fs.Int("max-concurrent", 0, "cap simultaneous upstream streams; 0 = unlimited")
 		disabled = fs.Bool("disabled", false, "add the credential disabled")
 	)
 	if err := parseFlags(fs, args); err != nil {
@@ -147,6 +152,12 @@ func connectionAdd(args []string, g globals, stdin io.Reader, stdout io.Writer) 
 	if *baseURL != "" {
 		mappingSet(entry, "base_url", scalar(*baseURL))
 	}
+	if *maxConc < 0 {
+		return fmt.Errorf("--max-concurrent must not be negative")
+	}
+	if *maxConc > 0 {
+		mappingSet(entry, "max_concurrent", intNode(*maxConc))
+	}
 	if *disabled {
 		mappingSet(entry, "disabled", boolNode(true))
 	}
@@ -187,6 +198,7 @@ func connectionSet(args []string, g globals, stdout io.Writer) error {
 		provider = fs.String("provider", "", "provider id or alias")
 		apiKey   = fs.String("api-key", "", "credential (empty removes it)")
 		baseURL  = fs.String("base-url", "", "override base URL (empty removes it)")
+		maxConc  = fs.Int("max-concurrent", 0, "cap simultaneous upstream streams; 0 removes the cap")
 		disabled = fs.Bool("disabled", false, "disable the credential")
 		enabled  = fs.Bool("enabled", false, "enable the credential")
 	)
@@ -233,6 +245,16 @@ func connectionSet(args []string, g globals, stdout io.Writer) error {
 	}
 	if flagProvided(changed, "base-url") {
 		setOrDeleteString(entry, "base_url", *baseURL)
+	}
+	if flagProvided(changed, "max-concurrent") {
+		if *maxConc < 0 {
+			return fmt.Errorf("--max-concurrent must not be negative")
+		}
+		if *maxConc == 0 {
+			mappingDelete(entry, "max_concurrent")
+		} else {
+			mappingSet(entry, "max_concurrent", intNode(*maxConc))
+		}
 	}
 	if flagProvided(changed, "disabled") {
 		if *disabled {

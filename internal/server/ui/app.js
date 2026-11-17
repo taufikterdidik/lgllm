@@ -559,6 +559,7 @@ function openConnectionForm(existing, providers, presetProvider) {
     placeholder: existing ? '*** unchanged' : 'sk-...',
   });
   const base = textInput(existing ? existing.base_url || '' : '', { placeholder: 'inherit provider base URL' });
+  const maxConcurrent = numberInput(existing ? existing.max_concurrent || 0 : 0, { min: '0', step: '1' });
   const disabled = checkboxInput('Disabled', existing ? existing.disabled : false);
   const keyHint = existing
     ? 'Leave blank to keep the stored key. It is never returned by the API.'
@@ -570,6 +571,8 @@ function openConnectionForm(existing, providers, presetProvider) {
       formField('Connection id', id),
       formField('API key', key, keyHint),
       formField('Base URL override', base, 'Optional; useful for a regional gateway.'),
+      formField('Max concurrent', maxConcurrent,
+        'Maximum simultaneous upstream streams for this credential. 0 means unlimited; a full connection falls through to the next credential or combo member.'),
       disabled.node,
     ]),
   ];
@@ -579,9 +582,13 @@ function openConnectionForm(existing, providers, presetProvider) {
       id: id.value.trim(),
       provider: providerSelect.value,
       base_url: base.value.trim(),
+      max_concurrent: Number(maxConcurrent.value || 0),
       disabled: disabled.input.checked,
     };
     if (!dto.id) throw new Error('Connection id is required');
+    if (!Number.isInteger(dto.max_concurrent) || dto.max_concurrent < 0) {
+      throw new Error('Max concurrent must be a non-negative integer');
+    }
     if (key.value) dto.api_key = key.value;
 
     if (existing) {
@@ -806,6 +813,7 @@ async function renderConnections() {
       c.id,
       c.provider,
       c.base_url ? c.base_url : el('span', { class: 'muted', text: 'inherit' }),
+      c.max_concurrent ? String(c.max_concurrent) : el('span', { class: 'muted', text: '∞' }),
       c.api_key || '—',
       c.disabled ? badge('disabled', 'bad') : badge('enabled', 'ok'),
       badge(c.managed, c.managed === 'admin' ? 'admin' : ''),
@@ -822,7 +830,7 @@ async function renderConnections() {
       }),
       el('span', { class: 'muted', text: 'API keys are shown as ***; leaving the field blank keeps the stored value.' }),
     ]),
-    table(['id', 'provider', 'base_url', 'api_key', 'status', 'source', 'actions'], rows),
+    table(['id', 'provider', 'base_url', 'max', 'api_key', 'status', 'source', 'actions'], rows),
   );
 }
 

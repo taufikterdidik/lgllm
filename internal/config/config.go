@@ -167,8 +167,13 @@ type Connection struct {
 	// APIKey may reference an environment variable: ${OPENAI_API_KEY}.
 	APIKey string `yaml:"api_key"`
 	// BaseURL overrides the provider base URL, for gateways and self-hosting.
-	BaseURL  string `yaml:"base_url"`
-	Disabled bool   `yaml:"disabled"`
+	BaseURL string `yaml:"base_url"`
+	// MaxConcurrent caps simultaneous upstream attempts on this credential.
+	// Zero means unlimited. A request that finds every credential full falls
+	// through to the next combo member and finally gets 429 instead of piling
+	// more streams onto an account the provider is already throttling.
+	MaxConcurrent int  `yaml:"max_concurrent"`
+	Disabled      bool `yaml:"disabled"`
 }
 
 // Server holds listener, timeout and transport limits.

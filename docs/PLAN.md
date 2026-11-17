@@ -1687,6 +1687,54 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 26. Batas konkurensi per connection — ✅ SELESAI
+
+> Status: setiap connection bisa membatasi jumlah attempt upstream yang berjalan
+> bersamaan lewat `max_concurrent`. Tujuannya melindungi kuota kredensial dari
+> puluhan stream paralel, bukan membatasi laju request klien (itu tetap tugas
+> `auth.rate_limit`).
+
+### 26a. Keputusan implementasi — ✅ SELESAI
+
+- **Konfigurasi.** `connections[].max_concurrent` adalah bilangan bulat; `0` atau
+  tidak diisi berarti tanpa batas. Nilai negatif ditolak saat validasi.
+- **Cakupan slot.** Slot diambil sebelum attempt upstream dan dilepas setelah
+  body selesai dibaca, jadi satu stream panjang memegang slot sampai klien
+  selesai. Client abort melepas slot lewat jalur normal.
+- **Connection penuh.** Attempt dilewati, bukan diantrekan. Server mencoba
+  kredensial lain pada provider yang sama, lalu combo member berikutnya.
+  Connection yang penuh tidak dianggap gagal, tidak masuk cooldown, dan tidak
+  menambah `lgllm_upstream_attempt_failures_total`.
+- **Semua penuh.** Bila tidak ada credential/combo member yang bisa menerima,
+  respons menjadi `429` dengan `Retry-After: 1` dan tipe `rate_limit_error`
+  (termasuk envelope Anthropic). Ini lebih jujur daripada menahan request tanpa
+  batas waktu di dalam proxy.
+- **State.** Paket baru `internal/connlimit` menyimpan counter per connection id.
+  Limiter hidup di `Server` dan bertahan saat config reload, sehingga attempt
+  yang sedang berjalan tidak kehilangan hitungan.
+- **Metrik.** Counter
+  `lgllm_connection_concurrency_limited_total{provider,connection}` menghitung
+  attempt yang dilewati.
+- **Admin/UI.** Field `max_concurrent` ikut di `GET/POST/PUT /api/connections`,
+  form Connections, dan tabel (nilai `∞` untuk tanpa batas). CLI juga punya
+  `config connection add|set --max-concurrent`.
+- **Verifikasi.** Test limiter (batas, unlimited, double release), test HTTP 429
+  + `Retry-After` + metric, test fallback ke combo member, validasi config, dan
+  round-trip admin.
+
+### 26b. Belum masuk fase 26
+
+- **Batas per provider/global.** Hanya level connection yang tersedia.
+- **Antrean dengan timeout.** Tidak ada mode tunggu; request langsung dialihkan
+  atau ditolak.
+- **Konkurensi per client key.** `auth.rate_limit` masih berbasis laju request,
+  bukan jumlah in-flight klien.
+- **Tampilan real-time.** UI belum menampilkan `in_flight / max_concurrent` per
+  connection; counter hanya tersedia lewat `/metrics`.
+- **Persistensi counter.** Seperti laju request, hitungan hilang saat restart.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1716,6 +1764,7 @@ jujur tanpa menambah lapisan routing baru.
 | 23 | Persistensi performance bbolt + ring | 1 hari | ✅ write-behind queue + reload saat restart |
 | 24 | Nama client key | 0,5 hari | ✅ name + rename + legacy admin.yaml |
 | 25 | Dashboard p50 | 0,5 hari | ✅ p50 UI, average tetap di API/metrics |
+| 26 | Batas konkurensi per connection | 0,5–1 hari | ✅ `max_concurrent`, fallback, 429 |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

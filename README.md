@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–25 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–26 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -14,8 +14,7 @@ per-key rate limits, an admin REST API with an embedded web UI, packaging
 benchmarks, a per-model TTFT/latency/TPS dashboard with p50, client-abort
 classification, a model-detail endpoint with combo context windows, a form-based
 admin UI with generated and named client keys, bbolt-backed performance history,
-and
-app/favicon assets.
+per-connection concurrency caps, and app/favicon assets.
 9Router parity is not the goal; see
 [`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each phase
 deliberately leaves out.
@@ -358,6 +357,28 @@ connections:
   - id: commandcode-claude
     provider: cmdc            # Claude models need the Messages surface
     api_key: ${COMMAND_CODE_API_KEY}
+```
+
+Each connection can also cap how many upstream streams it serves at once:
+
+```yaml
+connections:
+  - id: deepseek-main
+    provider: ds
+    api_key: ${DEEPSEEK_API_KEY}
+    max_concurrent: 4         # 0 or absent = unlimited
+```
+
+The slot covers the whole attempt, including the response body, so a long stream
+holds it until the client finishes reading. When every credential of a provider
+is full, the request moves to the next combo member; if nothing accepts it,
+lgllm returns `429` with `Retry-After` instead of queueing indefinitely. A
+connection at its cap is not marked unhealthy and does not enter cooldown.
+`lgllm_connection_concurrency_limited_total{provider,connection}` counts the
+skipped attempts. The CLI exposes the same knob:
+
+```bash
+lgllm config connection set --id deepseek-main --max-concurrent 4
 ```
 
 OpenCode Go is OpenAI-compatible but requires a stable per-conversation id in

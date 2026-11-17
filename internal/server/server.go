@@ -15,6 +15,7 @@ import (
 	"lgllm/internal/auth"
 	"lgllm/internal/balancer"
 	"lgllm/internal/config"
+	"lgllm/internal/connlimit"
 	"lgllm/internal/metrics"
 	"lgllm/internal/perf"
 	"lgllm/internal/ratelimit"
@@ -48,6 +49,8 @@ type Server struct {
 	Perf *perf.Registry
 	// RateLimit enforces auth.rate_limit per client key.
 	RateLimit *ratelimit.Limiter
+	// ConnLimit caps simultaneous upstream attempts per connection.
+	ConnLimit *connlimit.Limiter
 	// Admin owns the overlay for API-managed resources (nil disables the API).
 	Admin *admin.Manager
 
@@ -71,6 +74,7 @@ type Options struct {
 	Usage     *usagelog.Store
 	Perf      *perf.Registry
 	RateLimit *ratelimit.Limiter
+	ConnLimit *connlimit.Limiter
 	Admin     *admin.Manager
 }
 
@@ -105,6 +109,9 @@ func New(opts Options) *Server {
 	if opts.Balancer == nil {
 		opts.Balancer = balancer.New()
 	}
+	if opts.ConnLimit == nil {
+		opts.ConnLimit = connlimit.New()
+	}
 	if opts.Metrics == nil {
 		opts.Metrics = metrics.New()
 	}
@@ -135,6 +142,7 @@ func New(opts Options) *Server {
 		Usage:     opts.Usage,
 		Perf:      opts.Perf,
 		RateLimit: opts.RateLimit,
+		ConnLimit: opts.ConnLimit,
 		Admin:     opts.Admin,
 		mux:       http.NewServeMux(),
 		started:   time.Now(),

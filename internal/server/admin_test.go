@@ -274,7 +274,7 @@ func TestAdminConnectionCrudRedactsKey(t *testing.T) {
 		`{"id":"p2","base_url":"https://p2.example/v1","format":"openai","auth":"bearer","models":[{"id":"m"}]}`))
 
 	create := do(s, adminRequest(http.MethodPost, "/api/connections", adminTestToken,
-		`{"id":"c2","provider":"p2","api_key":"sk-secret-value"}`))
+		`{"id":"c2","provider":"p2","api_key":"sk-secret-value","max_concurrent":3}`))
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", create.Code, create.Body)
 	}
@@ -285,16 +285,25 @@ func TestAdminConnectionCrudRedactsKey(t *testing.T) {
 	if !strings.Contains(list.Body.String(), `"api_key":"***"`) {
 		t.Errorf("key not redacted: %s", list.Body)
 	}
+	if !strings.Contains(list.Body.String(), `"max_concurrent":3`) {
+		t.Errorf("max_concurrent not returned: %s", list.Body)
+	}
 
 	// Sending "***" back keeps the stored key.
 	update := do(s, adminRequest(http.MethodPut, "/api/connections/c2", adminTestToken,
-		`{"provider":"p2","api_key":"***","base_url":"https://c2.example"}`))
+		`{"provider":"p2","api_key":"***","base_url":"https://c2.example","max_concurrent":5}`))
 	if update.Code != http.StatusOK {
 		t.Fatalf("update status = %d, body = %s", update.Code, update.Body)
 	}
 	for _, c := range mgr.State().Connections {
-		if c.ID == "c2" && c.APIKey != "sk-secret-value" {
+		if c.ID != "c2" {
+			continue
+		}
+		if c.APIKey != "sk-secret-value" {
 			t.Errorf("stored key = %q", c.APIKey)
+		}
+		if c.MaxConcurrent != 5 {
+			t.Errorf("stored max_concurrent = %d, want 5", c.MaxConcurrent)
 		}
 	}
 

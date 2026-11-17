@@ -325,6 +325,9 @@ func (c *Config) validateProviders(add func(string, ...any)) {
 				add("%s.base_url: %v", where, err)
 			}
 		}
+		if cn.MaxConcurrent < 0 {
+			add("%s.max_concurrent must not be negative", where)
+		}
 	}
 
 	// --- aliases and combos ---

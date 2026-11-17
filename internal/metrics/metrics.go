@@ -56,6 +56,11 @@ type clientCancelKey struct {
 	AfterFinish bool
 }
 
+type connLimitedKey struct {
+	Provider   string
+	Connection string
+}
+
 // Metrics is safe for concurrent use.
 type Metrics struct {
 	mu              sync.Mutex
@@ -66,6 +71,7 @@ type Metrics struct {
 	failures        map[failureKey]int64
 	rateLimited     map[string]int64
 	clientCancelled map[clientCancelKey]int64
+	connLimited     map[connLimitedKey]int64
 	inflight        int64
 }
 
@@ -79,6 +85,7 @@ func New() *Metrics {
 		failures:        make(map[failureKey]int64),
 		rateLimited:     make(map[string]int64),
 		clientCancelled: make(map[clientCancelKey]int64),
+		connLimited:     make(map[connLimitedKey]int64),
 	}
 }
 
@@ -167,6 +174,14 @@ func (m *Metrics) ObserveClientCancel(provider string, afterFinish bool) {
 	m.mu.Unlock()
 }
 
+// ObserveConnectionLimited counts an attempt skipped because its credential was
+// already at connections[].max_concurrent.
+func (m *Metrics) ObserveConnectionLimited(provider, connection string) {
+	m.mu.Lock()
+	m.connLimited[connLimitedKey{Provider: provider, Connection: connection}]++
+	m.mu.Unlock()
+}
+
 // Render writes the Prometheus text exposition.
 func (m *Metrics) Render(w io.Writer) error {
 	m.mu.Lock()
@@ -236,6 +251,18 @@ func (m *Metrics) Render(w io.Writer) error {
 			for k, v := range m.clientCancelled {
 				emit(fmt.Sprintf(`provider="%s",after_finish="%t"`,
 					esc(k.Provider), k.AfterFinish), v)
+			}
+		}); err != nil {
+		return err
+	}
+
+	if err := writeCounter(w,
+		"lgllm_connection_concurrency_limited_total",
+		"Attempts skipped because the connection was at max_concurrent.",
+		func(emit func(labels string, value int64)) {
+			for k, v := range m.connLimited {
+				emit(fmt.Sprintf(`provider="%s",connection="%s"`,
+					esc(k.Provider), esc(k.Connection)), v)
 			}
 		}); err != nil {
 		return err

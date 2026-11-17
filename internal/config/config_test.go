@@ -115,6 +115,21 @@ func TestValidateAuthPolicy(t *testing.T) {
 	}
 }
 
+func TestValidateConnectionConcurrency(t *testing.T) {
+	_, err := Parse([]byte(`server:
+  listen: 127.0.0.1:20128
+providers:
+  - id: p
+connections:
+  - id: c
+    provider: p
+    max_concurrent: -1
+`))
+	if err == nil || !strings.Contains(err.Error(), "max_concurrent") {
+		t.Fatalf("error = %v, want it to mention max_concurrent", err)
+	}
+}
+
 func TestValidateListen(t *testing.T) {
 	for _, bad := range []string{"", "127.0.0.1", "127.0.0.1:70000", ":20128", "127.0.0.1:http"} {
 		t.Run(bad, func(t *testing.T) {
