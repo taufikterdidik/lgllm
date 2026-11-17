@@ -110,6 +110,9 @@ type perfModeDTO struct {
 	AvgTTFTMS    *float64 `json:"avg_ttft_ms"`
 	AvgLatencyMS *float64 `json:"avg_latency_ms"`
 	AvgTPS       *float64 `json:"avg_tps"`
+	P50TTFTMS    *float64 `json:"p50_ttft_ms"`
+	P50LatencyMS *float64 `json:"p50_latency_ms"`
+	P50TPS       *float64 `json:"p50_tps"`
 	TokensKnown  bool     `json:"tokens_known"`
 	TPSEstimated bool     `json:"tps_estimated"`
 	// LowSample warns that the average comes from fewer than
@@ -286,12 +289,18 @@ func buildPerfModeDTO(m perf.ModeStats) perfModeDTO {
 	if m.Samples > 0 {
 		ttft := round1(float64(m.AvgTTFT) / float64(time.Millisecond))
 		latency := round1(float64(m.AvgLatency) / float64(time.Millisecond))
+		p50ttft := round1(float64(m.P50TTFT) / float64(time.Millisecond))
+		p50latency := round1(float64(m.P50Latency) / float64(time.Millisecond))
 		dto.AvgTTFTMS = &ttft
 		dto.AvgLatencyMS = &latency
+		dto.P50TTFTMS = &p50ttft
+		dto.P50LatencyMS = &p50latency
 	}
 	if m.TPSKnown {
 		tps := round1(m.AvgTPS)
+		p50 := round1(m.P50TPS)
 		dto.AvgTPS = &tps
+		dto.P50TPS = &p50
 	}
 	return dto
 }

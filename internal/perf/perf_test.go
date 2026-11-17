@@ -54,6 +54,42 @@ func TestWindowKeepsLatestSamples(t *testing.T) {
 	}
 }
 
+func TestMedianStats(t *testing.T) {
+	r := New(10)
+	base := time.Unix(7000, 0)
+	for i, values := range []struct {
+		ttft    time.Duration
+		latency time.Duration
+		tps     float64
+	}{
+		{100 * time.Millisecond, time.Second, 10},
+		{200 * time.Millisecond, 2 * time.Second, 20},
+		{300 * time.Millisecond, 3 * time.Second, 30},
+	} {
+		r.Record("p", "m", Sample{
+			At: base.Add(time.Duration(i) * time.Second), OK: true, Stream: true,
+			TTFT: values.ttft, Latency: values.latency, TokensKnown: true, TPS: values.tps,
+		})
+	}
+	a := r.Snapshot()[0].Stream
+	if a.P50TTFT != 200*time.Millisecond || a.P50Latency != 2*time.Second || a.P50TPS != 20 {
+		t.Errorf("p50 = %v/%v/%v", a.P50TTFT, a.P50Latency, a.P50TPS)
+	}
+	if a.AvgTTFT != 200*time.Millisecond || a.AvgLatency != 2*time.Second || a.AvgTPS != 20 {
+		t.Errorf("avg changed = %v/%v/%v", a.AvgTTFT, a.AvgLatency, a.AvgTPS)
+	}
+}
+
+func TestMedianEvenSampleCount(t *testing.T) {
+	r := New(10)
+	r.Record("p", "m", Sample{OK: true, Stream: true, TTFT: 100 * time.Millisecond, Latency: time.Second, TokensKnown: true, TPS: 10})
+	r.Record("p", "m", Sample{OK: true, Stream: true, TTFT: 300 * time.Millisecond, Latency: 3 * time.Second, TokensKnown: true, TPS: 30})
+	a := r.Snapshot()[0].Stream
+	if a.P50TTFT != 200*time.Millisecond || a.P50Latency != 2*time.Second || a.P50TPS != 20 {
+		t.Errorf("even p50 = %v/%v/%v", a.P50TTFT, a.P50Latency, a.P50TPS)
+	}
+}
+
 func TestModesAreSeparatedAndFailuresIgnored(t *testing.T) {
 	r := New(DefaultWindow)
 	r.Record("p", "m", Sample{OK: true, Stream: true, TTFT: 100 * time.Millisecond,

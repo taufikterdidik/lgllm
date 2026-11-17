@@ -1651,6 +1651,42 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 25. Dashboard memakai p50 — ✅ SELESAI
+
+> Status: halaman Performance sekarang menampilkan **p50** untuk TTFT, latency,
+> dan TPS. Average tetap tersedia di API dan gauge Prometheus; p95/p99 ditunda
+> sampai jumlah sampel cukup.
+
+### 25a. Keputusan implementasi — ✅ SELESAI
+
+- **Perhitungan.** `ModeStats` mendapat `P50TTFT`, `P50Latency`, dan `P50TPS`.
+  Median dihitung dari attempt sukses di mode yang sama; sampel TPS hanya yang
+  memiliki usage. Untuk jumlah sampel genap, dipakai rata-rata dua nilai tengah.
+- **API.** Field `p50_ttft_ms`, `p50_latency_ms`, dan `p50_tps` ditambahkan di
+  samping `avg_*`. Klien lama tetap berjalan.
+- **UI.** Tabel Performance dan tabel per connection memakai p50. Header diberi
+  label `TTFT p50`, `latency p50`, `TPS p50`; toolbar menjelaskan bahwa average
+  tetap tersedia lewat API/metrics.
+- **Metrik.** Gauge `lgllm_model_ttft_seconds` dan `lgllm_model_tps` sengaja tetap
+  average untuk monitoring agregat.
+- **Sampel kecil.** Badge `low` tetap dipakai; p50 dengan satu atau dua sampel
+  secara matematis sama dengan average, tetapi ditandai sebagai sampel kecil.
+- **Verifikasi.** Test median ganjil/genap, API p50, dan UI statis; semua test
+  dan race test bersih.
+
+### 25b. Belum masuk fase 25
+
+- **p95/p99.** Belum dihitung karena window 10–50 sampel membuat ekor distribusi
+  tidak stabil.
+- **History-based percentile.** Perhitungan masih dari ring, bukan history bbolt.
+- **Gauge p50.** Prometheus tetap mengekspos average; belum ada gauge median.
+- **Weighted TPS.** TPS masih rata-rata/median per attempt, bukan total token
+  dibagi total waktu.
+- **Window besar.** Belum ada panduan/konfigurasi khusus untuk window ribuan
+  sampel guna persentil ekor.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1679,6 +1715,7 @@ jujur tanpa menambah lapisan routing baru.
 | 22 | Context combo + endpoint model OpenRouter | 1 hari | ✅ `/v1/model/{model}` + ctx minimum |
 | 23 | Persistensi performance bbolt + ring | 1 hari | ✅ write-behind queue + reload saat restart |
 | 24 | Nama client key | 0,5 hari | ✅ name + rename + legacy admin.yaml |
+| 25 | Dashboard p50 | 0,5 hari | ✅ p50 UI, average tetap di API/metrics |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

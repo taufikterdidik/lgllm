@@ -39,15 +39,20 @@ type Sample struct {
 	TPSEstimated bool
 }
 
-// ModeStats is the average of successful samples in one mode.
+// ModeStats summarizes successful samples in one mode. Averages and medians
+// are computed from the same window; the dashboard uses p50 while Prometheus
+// keeps the average for aggregate monitoring.
 type ModeStats struct {
 	Samples    int
 	AvgTTFT    time.Duration
 	AvgLatency time.Duration
 	AvgTPS     float64
+	P50TTFT    time.Duration
+	P50Latency time.Duration
+	P50TPS     float64
 	// TokensKnown reports whether at least one sample carried provider usage.
 	TokensKnown bool
-	// TPSKnown reports whether AvgTPS can be shown.
+	// TPSKnown reports whether AvgTPS/P50TPS can be shown.
 	TPSKnown bool
 	// TPSEstimated marks a non-stream average, where first-token time does not
 	// exist and TPS falls back to tokens/latency.
@@ -312,24 +317,28 @@ func aggregate(k key, samples []Sample) Aggregate {
 
 func summarize(samples []Sample, stream bool) ModeStats {
 	var (
-		m          ModeStats
-		ttft, lat  float64
-		tps        float64
-		tpsSamples int
+		m                       ModeStats
+		totalTTFT, totalLatency float64
+		totalTPS                float64
+		ttfts                   []time.Duration
+		latencies               []time.Duration
+		tpsValues               []float64
 	)
 	for _, s := range samples {
 		if !s.OK || s.Stream != stream {
 			continue
 		}
 		m.Samples++
-		ttft += float64(s.TTFT)
-		lat += float64(s.Latency)
+		totalTTFT += float64(s.TTFT)
+		totalLatency += float64(s.Latency)
+		ttfts = append(ttfts, s.TTFT)
+		latencies = append(latencies, s.Latency)
 		if s.TokensKnown {
 			m.TokensKnown = true
 		}
 		if s.TPS > 0 {
-			tps += s.TPS
-			tpsSamples++
+			totalTPS += s.TPS
+			tpsValues = append(tpsValues, s.TPS)
 		}
 		if s.TPSEstimated {
 			m.TPSEstimated = true
@@ -338,11 +347,40 @@ func summarize(samples []Sample, stream bool) ModeStats {
 	if m.Samples == 0 {
 		return m
 	}
-	m.AvgTTFT = time.Duration(ttft / float64(m.Samples))
-	m.AvgLatency = time.Duration(lat / float64(m.Samples))
-	if tpsSamples > 0 {
-		m.AvgTPS = tps / float64(tpsSamples)
+	m.AvgTTFT = time.Duration(totalTTFT / float64(m.Samples))
+	m.AvgLatency = time.Duration(totalLatency / float64(m.Samples))
+	m.P50TTFT = medianDuration(ttfts)
+	m.P50Latency = medianDuration(latencies)
+	if len(tpsValues) > 0 {
+		m.AvgTPS = totalTPS / float64(len(tpsValues))
+		m.P50TPS = medianFloat(tpsValues)
 		m.TPSKnown = true
 	}
 	return m
+}
+
+func medianDuration(values []time.Duration) time.Duration {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := append([]time.Duration(nil), values...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	mid := len(sorted) / 2
+	if len(sorted)%2 == 1 {
+		return sorted[mid]
+	}
+	return (sorted[mid-1] + sorted[mid]) / 2
+}
+
+func medianFloat(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	mid := len(sorted) / 2
+	if len(sorted)%2 == 1 {
+		return sorted[mid]
+	}
+	return (sorted[mid-1] + sorted[mid]) / 2
 }

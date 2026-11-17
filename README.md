@@ -6,14 +6,15 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–24 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–25 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
 per-key rate limits, an admin REST API with an embedded web UI, packaging
-benchmarks, a per-model TTFT/latency/TPS dashboard, client-abort classification,
-a model-detail endpoint with combo context windows, a form-based admin UI with
-generated and named client keys, bbolt-backed performance history, and
+benchmarks, a per-model TTFT/latency/TPS dashboard with p50, client-abort
+classification, a model-detail endpoint with combo context windows, a form-based
+admin UI with generated and named client keys, bbolt-backed performance history,
+and
 app/favicon assets.
 9Router parity is not the goal; see
 [`docs/PLAN.md`](docs/PLAN.md) for the phase-by-phase scope and what each phase
@@ -488,9 +489,15 @@ TTFT (first content event), latency (last byte) and TPS in a small per-model rin
 (`metrics.performance_window`, default 10). Stream TPS uses the provider's usage
 between the first and last content event; a JSON response has no first-token
 signal, so its TPS is `tokens/latency` and the UI labels it `est.`. Failures
-count toward the success rate but not toward the averages, and a provider that
-reports no usage yields `n/a` rather than a guessed token count. The tap is
+count toward the success rate but not toward the averages or p50, and a provider
+that reports no usage yields `n/a` rather than a guessed token count. The tap is
 read-only, so a passthrough stream stays byte-identical.
+
+The Performance tab shows the **p50 (median)** of the last window. The API keeps
+`avg_*` fields for compatibility and the Prometheus gauges remain averages for
+aggregate monitoring; `p50_*` fields are returned alongside them. p50 is more
+stable than a mean over a small window; p95/p99 are intentionally deferred until
+the window or persisted history is large enough to make them meaningful.
 
 The ring is the fast read path. Set `metrics.performance_db` to a bbolt file to
 also persist samples: writes go through a bounded background queue, the latest

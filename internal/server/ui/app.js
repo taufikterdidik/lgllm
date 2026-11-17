@@ -965,16 +965,23 @@ function fmtMs(value) {
   return (value < 10 ? value.toFixed(1) : Math.round(value)) + ' ms';
 }
 
+function percentileOrAvg(mode, metric) {
+  if (!mode) return undefined;
+  const p50 = mode['p50_' + metric];
+  return p50 === null || p50 === undefined ? mode['avg_' + metric] : p50;
+}
+
 function fmtTps(mode) {
-  if (!mode || mode.avg_tps === null || mode.avg_tps === undefined) return 'n/a';
-  return mode.avg_tps.toFixed(1) + (mode.tps_estimated ? ' est.' : '');
+  const value = percentileOrAvg(mode, 'tps');
+  if (value === null || value === undefined) return 'n/a';
+  return value.toFixed(1) + (mode.tps_estimated ? ' est.' : '');
 }
 
 // pickPerfMode chooses the mode whose TPS is most useful. When no provider sent
 // usage, it falls back to whichever mode has samples so TTFT/latency still
 // render instead of showing an empty row.
 function pickPerfMode(m) {
-  const hasTps = (s) => s && s.avg_tps !== null && s.avg_tps !== undefined;
+  const hasTps = (s) => percentileOrAvg(s, 'tps') !== undefined;
   if (hasTps(m.stream)) return m.stream;
   if (hasTps(m.non_stream)) return m.non_stream;
   return m.stream.samples > 0 ? m.stream : m.non_stream;
@@ -1144,15 +1151,15 @@ function connectionTable(m) {
       c.connection,
       String(c.attempts),
       String(c.successes),
-      fmtMs(mode.avg_ttft_ms),
-      fmtMs(mode.avg_latency_ms),
+      fmtMs(percentileOrAvg(mode, 'ttft_ms')),
+      fmtMs(percentileOrAvg(mode, 'latency_ms')),
       tpsCell(mode),
       perfModes(c),
       c.last_seen ? new Date(c.last_seen).toLocaleTimeString() : '—',
     ];
   });
   return table(
-    ['connection', 'requests', 'ok', 'TTFT', 'latency', 'TPS', 'mode', 'last seen'],
+    ['connection', 'requests', 'ok', 'TTFT p50', 'latency p50', 'TPS p50', 'mode', 'last seen'],
     rows,
   );
 }
@@ -1205,7 +1212,7 @@ async function renderPerformance() {
     }
 
     const head = el('thead', {}, [el('tr', {}, [
-      'model', 'requests', 'ok', 'TTFT', 'latency', 'TPS', 'TPS trend',
+      'model', 'requests', 'ok', 'TTFT p50', 'latency p50', 'TPS p50', 'TPS trend',
       'mode', 'last seen',
     ].map((h) => el('th', { text: h })))]);
     host.replaceChildren(el('table', {}, [head, tbody]));
@@ -1224,13 +1231,13 @@ async function renderPerformance() {
           model: m.model,
           source: m,
           series: m.series || [],
-          tps: mode.avg_tps === null || mode.avg_tps === undefined ? -1 : mode.avg_tps,
+          tps: percentileOrAvg(mode, 'tps') === undefined ? -1 : percentileOrAvg(mode, 'tps'),
           cells: [
             m.provider + '/' + m.model,
             String(m.attempts),
             String(m.successes),
-            fmtMs(mode.avg_ttft_ms),
-            fmtMs(mode.avg_latency_ms),
+            fmtMs(percentileOrAvg(mode, 'ttft_ms')),
+            fmtMs(percentileOrAvg(mode, 'latency_ms')),
             tpsCell(mode),
             sparkline(m.series || [], 'tps'),
             perfModes(m),
@@ -1260,7 +1267,7 @@ async function renderPerformance() {
     el('h2', { text: 'Performance' }),
     el('div', { class: 'toolbar' }, [
       meta,
-      el('span', { class: 'muted', text: 'last N attempts per model; est. = tokens/latency; click a row for charts; refresh 5 s' }),
+      el('span', { class: 'muted', text: 'p50 of the last N attempts; average remains in the API and metrics; click a row for charts; refresh 5 s' }),
     ]),
     host,
   );

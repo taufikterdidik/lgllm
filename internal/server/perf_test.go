@@ -66,6 +66,11 @@ func TestAdminPerformanceShowsWindowAndSplitsModes(t *testing.T) {
 	if m.Stream.AvgTPS == nil || *m.Stream.AvgTPS != 40 {
 		t.Errorf("stream tps = %v", m.Stream.AvgTPS)
 	}
+	if m.Stream.P50TTFTMS == nil || *m.Stream.P50TTFTMS != 100 ||
+		m.Stream.P50LatencyMS == nil || *m.Stream.P50LatencyMS != 2000 ||
+		m.Stream.P50TPS == nil || *m.Stream.P50TPS != 40 {
+		t.Errorf("stream p50 = %+v", m.Stream)
+	}
 	if m.NonStream.Samples != 0 || m.NonStream.AvgTPS != nil {
 		t.Errorf("non_stream = %+v, want empty with null averages", m.NonStream)
 	}
