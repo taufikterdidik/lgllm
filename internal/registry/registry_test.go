@@ -62,6 +62,30 @@ func TestOpenCodeGoCatalog(t *testing.T) {
 	if len(b.Models) < 20 {
 		t.Errorf("models = %d, want the documented Go list", len(b.Models))
 	}
+	for _, id := range []string{
+		"beam-free",
+		"hy4-flash-free",
+		"iceman-contributor-free",
+		"longcat-2.5-free",
+		"qwen4-max",
+	} {
+		if !containsString(b.Models, id) {
+			t.Errorf("new upstream Go model %q is missing", id)
+		}
+		if b.Contexts[id] == 0 {
+			t.Errorf("Go model %q has no context hint", id)
+		}
+	}
+	for _, id := range []string{"mimo-v2.5", "mimo-v2.5-pro"} {
+		if containsString(b.Models, id) {
+			t.Errorf("stale Go model %q is still advertised", id)
+		}
+	}
+	for _, id := range b.Models {
+		if b.Contexts[id] == 0 {
+			t.Errorf("Go model %q has no context hint", id)
+		}
+	}
 
 	// A connection alone is enough to materialize the provider.
 	cfg := config.Default()
@@ -231,6 +255,12 @@ func TestCatalogContextHintsPropagate(t *testing.T) {
 	}
 	if got := find("opencode-go", "deepseek-v4.1-flash"); got != 1_000_000 {
 		t.Errorf("opencode-go context = %d", got)
+	}
+	if got := find("opencode-go", "qwen4-max"); got != 1_000_000 {
+		t.Errorf("opencode-go qwen4-max context = %d", got)
+	}
+	if got := find("opencode-go", "hy4-flash-free"); got != 1_048_576 {
+		t.Errorf("opencode-go hy4-flash-free context = %d", got)
 	}
 }
 

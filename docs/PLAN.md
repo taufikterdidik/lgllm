@@ -1773,6 +1773,73 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 28. Skala log pada chart performance — ✅ SELESAI
+
+> Status: chart TTFT/latency dan TPS bisa dipilih antara skala **linear** dan
+> **log**. Default tetap linear; pilihan disimpan di `localStorage`.
+
+### 28a. Keputusan implementasi — ✅ SELESAI
+
+- **Toggle.** Tombol `Linear scale` / `Log scale` di toolbar Performance
+  mengubah kedua chart besar tanpa reload. Sparkline TPS di tabel tetap linear
+  agar tren kecil tidak terdistorsi.
+- **Domain log.** Batas bawah memakai dekade di bawah nilai minimum; batas atas
+  memakai `niceMax` agar tidak ada satu dekade kosong di puncak. Tick memakai
+  dekade dengan maksimum enam label.
+- **Fallback.** Jika rentang data kurang dari 2x, mode log memakai domain linear
+  karena log tidak memberi informasi tambahan dan tick menjadi tidak berguna.
+- **Nilai nol/negatif.** Titik non-positif dilewati di jalur log (data saat ini
+  hanya berisi nilai positif atau `null`), dan failed attempt tetap ditandai
+  garis putus-putus merah.
+- **Label sumbu.** Milidetik berubah menjadi detik setelah 1000 ms; nilai TPS
+  besar dipadatkan dengan akhiran `k`.
+- **Legend.** Swatch memakai class CSS, bukan atribut `style`, sehingga tidak
+  melanggar CSP `style-src 'self'`.
+- **Verifikasi.** UI test statis dan smoke Playwright: toggle mengubah label
+  sumbu, chart tetap render, pilihan bertahan setelah reload, tanpa error
+  console.
+
+### 28b. Belum masuk fase 28
+
+- **Log untuk sparkline.** Sparkline tabel tetap linear.
+- **Toggle per chart.** Kedua chart memakai satu pilihan global.
+- **Auto-scale.** Belum ada mode otomatis berdasarkan lebar rentang data.
+- **Sumbu ganda.** TTFT dan latency masih berbagi satu sumbu.
+
+---
+
+## 29. Sinkronisasi katalog OpenCode Go — ✅ SELESAI
+
+> Status: katalog `opencode-go` disegarkan dari `GET /models` upstream
+> (19 November 2026). Upstream mengiklankan 32 model; katalog sekarang sama
+> persis, termasuk context window.
+
+### 29a. Keputusan implementasi — ✅ SELESAI
+
+- **Model baru.** `beam-free`, `hy4-flash-free`, `iceman-contributor-free`,
+  `longcat-2.5-free`, dan `qwen4-max` ditambahkan.
+- **Model usang.** `mimo-v2.5` dan `mimo-v2.5-pro` dihapus karena sudah tidak
+  diiklankan upstream.
+- **Urutan.** Daftar mengikuti urutan respons upstream.
+- **Context.** Seluruh 32 model mendapat context dari `limit.context`; sebelumnya
+  hanya `deepseek-v4.1-flash` yang punya hint.
+- **Format.** Semua model tetap di satu entri chat karena gateway Go menerjemahkan
+  model teks ke permukaan OpenAI Chat, termasuk yang upstream merekomendasikan
+  `/messages`, `/responses`, atau `generate-content`.
+- **Verifikasi.** Perbandingan otomatis katalog vs upstream: 32/32 model, tanpa
+  selisih context. Test memastikan model baru ada, model usang hilang, dan setiap
+  model punya context.
+
+### 29b. Belum masuk fase 29
+
+- **Katalog otomatis.** Daftar masih hard-coded dan memerlukan rilis baru.
+- **Metadata lain.** `name`, `capabilities`, dan `recommended_api` upstream belum
+  disimpan di katalog.
+- **Ketersediaan per akun.** Plan Go/Go Plus bisa berbeda; katalog bersifat
+  global.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1804,6 +1871,8 @@ jujur tanpa menambah lapisan routing baru.
 | 25 | Dashboard p50 | 0,5 hari | ✅ p50 UI, average tetap di API/metrics |
 | 26 | Batas konkurensi per connection | 0,5–1 hari | ✅ `max_concurrent`, fallback, 429 |
 | 27 | Sinkronisasi katalog Command Code | 0,5 hari | ✅ 3 model baru + context upstream |
+| 28 | Skala log chart performance | 0,5 hari | ✅ toggle linear/log, sparkline linear |
+| 29 | Sinkronisasi katalog OpenCode Go | 0,5 hari | ✅ 32 model + context upstream |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

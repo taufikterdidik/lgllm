@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–27 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–29 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -519,6 +519,13 @@ The Performance tab shows the **p50 (median)** of the last window. The API keeps
 aggregate monitoring; `p50_*` fields are returned alongside them. p50 is more
 stable than a mean over a small window; p95/p99 are intentionally deferred until
 the window or persisted history is large enough to make them meaningful.
+
+The expanded time-series charts have a **Linear / Log** toggle. Linear is the
+default; the choice is stored in `localStorage`. Log mode compresses a wide
+latency spread so one slow outlier no longer flattens every fast sample, and
+axis labels switch to seconds once they pass 1000 ms. A range smaller than 2x
+stays linear because log would not add information there; the table sparkline
+also stays linear. Failed attempts remain dashed red markers in both modes.
 
 The ring is the fast read path. Set `metrics.performance_db` to a bbolt file to
 also persist samples: writes go through a bounded background queue, the latest
