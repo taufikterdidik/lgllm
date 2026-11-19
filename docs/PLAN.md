@@ -1840,6 +1840,39 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 30. OpenCode Go di permukaan Anthropic — ✅ SELESAI
+
+> Status: katalog baru `opencode-go-anthropic` (alias `ocga`) menyajikan gateway
+> OpenCode Go lewat Anthropic Messages API, sehingga klien seperti Claude Code
+> dan Anthropic SDK bisa memanggil model seperti `ocga/qwen4-max`.
+
+### 30a. Keputusan implementasi — ✅ SELESAI
+
+- **Katalog.** `opencode-go-anthropic` memakai
+  `https://opencode.ai/inference/go/anthropic/v1`, `format: anthropic`,
+  `auth: bearer`, dan `session_header: x-opencode-session`.
+- **Model.** Daftar 32 model dan context dipakai bersama dengan `opencode-go`
+  lewat variabel katalog yang sama; tidak ada duplikasi data.
+- **Kredensial.** Satu connection hanya milik satu provider, jadi pengguna
+  menambahkan connection kedua dengan API key yang sama. Config lokal mendapat
+  `ocga-humas`.
+- **Verifikasi.** Request nyata `POST /v1/messages` dengan
+  `model: ocga/qwen4-max` melalui lgllm mengembalikan `200` dan respons Anthropic
+  yang valid, termasuk blok thinking dan usage.
+- **Test.** Katalog, alias, base URL, format, session header, context, dan
+  resolusi `ocga/qwen4-max`; materialisasi dua provider dari dua connection.
+
+### 30b. Belum masuk fase 30
+
+- **Kredensial bersama.** Dua permukaan tetap memerlukan dua connection dan
+  salinan API key di config.
+- **Alias lintas provider.** Belum ada cara membuat alias yang memilih surface
+  berdasarkan format ingress.
+- **Daftar model per surface.** Kedua entri memakai daftar yang sama, walaupun
+  upstream menandai sebagian model hanya untuk `messages`.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1873,6 +1906,7 @@ jujur tanpa menambah lapisan routing baru.
 | 27 | Sinkronisasi katalog Command Code | 0,5 hari | ✅ 3 model baru + context upstream |
 | 28 | Skala log chart performance | 0,5 hari | ✅ toggle linear/log, sparkline linear |
 | 29 | Sinkronisasi katalog OpenCode Go | 0,5 hari | ✅ 32 model + context upstream |
+| 30 | OpenCode Go Anthropic surface | 0,5 hari | ✅ `opencode-go-anthropic` (`ocga`) |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

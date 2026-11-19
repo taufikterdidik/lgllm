@@ -99,6 +99,68 @@ func TestOpenCodeGoCatalog(t *testing.T) {
 	}
 }
 
+func TestOpenCodeGoAnthropicCatalog(t *testing.T) {
+	b, ok := CatalogByRef("ocga")
+	if !ok {
+		t.Fatal("opencode-go-anthropic is missing from the catalog")
+	}
+	if b.ID != "opencode-go-anthropic" {
+		t.Errorf("id = %q", b.ID)
+	}
+	if b.BaseURL != "https://opencode.ai/inference/go/anthropic/v1" {
+		t.Errorf("base_url = %q", b.BaseURL)
+	}
+	if b.Format != FormatAnthropic || b.Auth != "bearer" {
+		t.Errorf("format/auth = %q/%q", b.Format, b.Auth)
+	}
+	if b.SessionHeader != "x-opencode-session" {
+		t.Errorf("session_header = %q", b.SessionHeader)
+	}
+	if b.KeyEnv != "OPENCODE_GO_API_KEY" {
+		t.Errorf("key_env = %q", b.KeyEnv)
+	}
+	if !containsString(b.Models, "qwen4-max") {
+		t.Error("qwen4-max is missing from the Anthropic surface")
+	}
+	if len(b.Models) != len(openCodeGoModels) {
+		t.Errorf("models = %d, want the shared Go list (%d)", len(b.Models), len(openCodeGoModels))
+	}
+	for _, id := range b.Models {
+		if b.Contexts[id] == 0 {
+			t.Errorf("Anthropic model %q has no context hint", id)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Connections = []config.Connection{
+		{ID: "go", Provider: "ocg", APIKey: "oc_sk_test"},
+		{ID: "go-ant", Provider: "ocga", APIKey: "oc_sk_test"},
+	}
+	got := Materialize(cfg.Providers, cfg.Connections)
+	if len(got) != 2 {
+		t.Fatalf("materialized = %+v", got)
+	}
+	formats := make(map[string]string, len(got))
+	for _, p := range got {
+		formats[p.ID] = p.Format
+	}
+	if formats["opencode-go"] != FormatChat || formats["opencode-go-anthropic"] != FormatAnthropic {
+		t.Errorf("formats = %v", formats)
+	}
+
+	reg, err := New(&cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	p, model, err := reg.Resolve("ocga/qwen4-max")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if p.ID != "opencode-go-anthropic" || model != "qwen4-max" {
+		t.Errorf("route = %s/%s", p.ID, model)
+	}
+}
+
 func TestCommandCodeCatalog(t *testing.T) {
 	chat, ok := CatalogByRef("cmd")
 	if !ok {

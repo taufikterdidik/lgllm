@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–29 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–30 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -336,7 +336,8 @@ wire_api = "chat"
 
 Providers are declared in `providers`/`connections`. Everything in the built-in
 catalog (anthropic, commandcode, commandcode-claude, deepseek, gemini, groq,
-mistral, ollama, openai, opencode-go, openrouter) only needs a connection entry;
+mistral, ollama, openai, opencode-go, opencode-go-anthropic, openrouter) only
+needs a connection entry;
 a custom gateway spells out `base_url`, `format` and `auth`. A provider becomes
 usable only when at least one enabled connection references it and has a key
 (except `auth: none`, e.g. local Ollama).
@@ -394,6 +395,22 @@ providers:
   - id: my-gateway
     base_url: https://gateway.example/v1
     session_header: x-opencode-session
+```
+
+The same gateway is also available on the Anthropic Messages surface as
+`opencode-go-anthropic` (`ocga`). It uses the same model ids and credential but
+serves `https://opencode.ai/inference/go/anthropic/v1`, so Claude Code and
+Anthropic SDK clients can call models such as `ocga/qwen4-max` natively. Add a
+separate connection because one connection belongs to one provider:
+
+```yaml
+connections:
+  - id: ocg-humas
+    provider: opencode-go
+    api_key: ${OPENCODE_GO_API_KEY}
+  - id: ocga-humas
+    provider: opencode-go-anthropic
+    api_key: ${OPENCODE_GO_API_KEY}
 ```
 
 Command Code is also built in. It serves OpenAI chat models and Claude models

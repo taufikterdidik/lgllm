@@ -155,6 +155,14 @@ connections:
   #   provider: or
   #   api_key: ${OPENROUTER_API_KEY}
   #
+  # OpenCode Go is exposed on two surfaces; add one connection per surface.
+  # - id: opencode-go-main
+  #   provider: opencode-go            # OpenAI Chat, alias ocg
+  #   api_key: ${OPENCODE_GO_API_KEY}
+  # - id: opencode-go-anthropic
+  #   provider: opencode-go-anthropic  # Anthropic Messages, alias ocga
+  #   api_key: ${OPENCODE_GO_API_KEY}
+  #
   # - id: gateway-a
   #   provider: mygateway
   #   api_key: ${GATEWAY_API_KEY}
