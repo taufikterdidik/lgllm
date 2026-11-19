@@ -75,6 +75,9 @@ tr:hover td { background: #141922; }
 .chart-svg { width: 100%; height: auto; display: block; }
 .spark { width: 110px; height: 26px; display: block; }
 .legend { display: flex; gap: 12px; font-size: 12px; }
+.swatch.ttft { background: #7ec699; }
+.swatch.latency { background: #6ea8fe; }
+.swatch.tps { background: #e0af68; }
 .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
 
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; width: min(720px, 92vw); }

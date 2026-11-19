@@ -48,6 +48,9 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 	if !strings.Contains(js.Body.String(), "max_concurrent") {
 		t.Error("app.js does not expose max_concurrent in the connection form")
 	}
+	if !strings.Contains(js.Body.String(), "lgllm.perf.scale") || !strings.Contains(js.Body.String(), "logTicks") {
+		t.Error("app.js does not implement the performance log-scale toggle")
+	}
 	if !strings.Contains(js.Body.String(), "/api/providers?all=1") ||
 		!strings.Contains(js.Body.String(), "/api/catalog") {
 		t.Error("app.js does not load the provider catalog")

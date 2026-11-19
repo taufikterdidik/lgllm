@@ -5,6 +5,7 @@ const state = {
   tab: 'providers',
   logsAbort: null,
   perfTimer: null,
+  perfScale: localStorage.getItem('lgllm.perf.scale') === 'log' ? 'log' : 'linear',
   usageGroup: 'provider',
 };
 
@@ -1073,10 +1074,57 @@ function niceMax(v) {
   return step * p;
 }
 
+// fmtAxis keeps labels readable on both scales: milliseconds turn into seconds
+// once they pass 1000, and large TPS values get a compact k suffix.
+function fmtAxis(v, unit) {
+  if (unit === 'ms') {
+    if (v >= 1000) {
+      return (v / 1000).toFixed(v >= 10000 ? 0 : 1).replace(/\.0$/, '') + 's';
+    }
+    return Math.round(v) + 'ms';
+  }
+  if (v >= 1000) {
+    return (v / 1000).toFixed(v >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k';
+  }
+  if (v >= 10) return String(Math.round(v));
+  return v.toFixed(1).replace(/\.0$/, '');
+}
+
+// logDomain returns decade-based bounds for a log axis. Very narrow ranges are
+// left to the linear path: a 1.1x spread on a log axis wastes most of the plot
+// and produces ugly ticks without revealing anything new.
+function logDomain(values) {
+  const positive = values.filter((v) => typeof v === 'number' && isFinite(v) && v > 0);
+  if (!positive.length) return null;
+  const min = Math.min(...positive);
+  const max = Math.max(...positive);
+  if (max / min < 2) return null;
+  const lo = Math.pow(10, Math.floor(Math.log10(min)));
+  const hi = niceMax(max);
+  if (!(lo > 0) || !(hi > lo)) return null;
+  return { lo, hi };
+}
+
+// logTicks uses whole decades between the bounds, then adds the top bound when
+// it is not itself a decade. More than six grid lines is noise on a 150px plot.
+function logTicks(lo, hi) {
+  const ticks = [];
+  for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++) {
+    const v = Math.pow(10, e);
+    if (v >= lo * 0.999 && v <= hi * 1.001) ticks.push(v);
+  }
+  if (!ticks.length) ticks.push(lo);
+  if (hi / ticks[ticks.length - 1] >= 1.5) ticks.push(hi);
+  while (ticks.length > 6) ticks.splice(1, 1);
+  return ticks;
+}
+
 // lineChart draws one or more series over the attempt ring, including red
 // markers for failed attempts. It is deliberately plain SVG: no chart library,
-// no build step, and the same code works for TTFT, latency and TPS.
-function lineChart(samples, specs, unit) {
+// no build step, and the same code works for TTFT, latency and TPS. With
+// scale="log" a wide latency spread stays readable instead of flattening every
+// fast sample against a single slow outlier.
+function lineChart(samples, specs, unit, scale = 'linear') {
   samples = samples || [];
   const series = specs.map((spec) => ({
     spec,
@@ -1088,13 +1136,20 @@ function lineChart(samples, specs, unit) {
   const width = 760, height = 150;
   const left = 46, right = 10, top = 12, bottom = 22;
   const plotW = width - left - right, plotH = height - top - bottom;
-  const max = niceMax(Math.max(...series.flatMap((s) => s.points.map((p) => p.s[s.spec.key]))));
+  const values = series.flatMap((s) => s.points.map((p) => p.s[s.spec.key]));
+  const log = scale === 'log' ? logDomain(values) : null;
+  const max = niceMax(Math.max(...values));
+  const ticks = log ? logTicks(log.lo, log.hi) : [0, max / 2, max];
   const x = (i) => samples.length <= 1 ? left + plotW / 2 : left + (i / (samples.length - 1)) * plotW;
-  const y = (v) => top + plotH - (v / max) * plotH;
+  const y = log
+    ? (v) => top + plotH - (
+      (Math.log10(v) - Math.log10(log.lo)) /
+      (Math.log10(log.hi) - Math.log10(log.lo))
+    ) * plotH
+    : (v) => top + plotH - (v / max) * plotH;
 
   const children = [];
-  for (let i = 0; i <= 2; i++) {
-    const v = max * i / 2;
+  for (const v of ticks) {
     const yy = y(v);
     children.push(svgEl('line', {
       x1: left, x2: width - right, y1: yy, y2: yy,
@@ -1102,7 +1157,7 @@ function lineChart(samples, specs, unit) {
     }));
     children.push(svgEl('text', {
       x: left - 6, y: yy + 3, 'text-anchor': 'end', fill: '#8b93a3', 'font-size': '10',
-    }, [unit === 'ms' ? Math.round(v) + 'ms' : v.toFixed(1)]));
+    }, [fmtAxis(v, unit)]));
   }
   samples.forEach((s, i) => {
     if (s.ok) return;
@@ -1113,12 +1168,14 @@ function lineChart(samples, specs, unit) {
     }, [svgEl('title', {}, [new Date(s.at).toLocaleTimeString() + ' · failed'])]));
   });
   for (const { spec, points } of series) {
+    const plot = log ? points.filter((p) => p.s[spec.key] > 0) : points;
+    if (!plot.length) continue;
     children.push(svgEl('polyline', {
-      points: points.map((p) => x(p.i) + ',' + y(p.s[spec.key])).join(' '),
+      points: plot.map((p) => x(p.i) + ',' + y(p.s[spec.key])).join(' '),
       fill: 'none', stroke: spec.color, 'stroke-width': '1.6',
       'stroke-linecap': 'round', 'stroke-linejoin': 'round',
     }));
-    for (const p of points) {
+    for (const p of plot) {
       children.push(svgEl('circle', {
         cx: x(p.i), cy: y(p.s[spec.key]), r: '2', fill: spec.color,
       }, [svgEl('title', {}, [
@@ -1140,14 +1197,14 @@ function lineChart(samples, specs, unit) {
   return svgEl('svg', { viewBox: '0 0 ' + width + ' ' + height, class: 'chart-svg' }, children);
 }
 
-function chartBlock(title, samples, specs, unit) {
+function chartBlock(title, samples, specs, unit, scale = 'linear') {
   const legend = el('div', { class: 'legend' }, specs.map((spec) =>
     el('span', { class: 'muted' }, [
-      el('i', { class: 'swatch', style: 'background:' + spec.color }),
+      el('i', { class: 'swatch ' + (spec.swatch || '') }),
       spec.label,
     ])));
   return el('div', { class: 'chart' }, [el('h4', { text: title }), legend,
-    lineChart(samples, specs, unit)]);
+    lineChart(samples, specs, unit, scale)]);
 }
 
 function connectionTable(m) {
@@ -1203,12 +1260,12 @@ async function renderPerformance() {
         details.append(
           el('div', { class: 'charts' }, [
             chartBlock('TTFT & latency (ms)', row.series, [
-              { key: 'ttft_ms', label: 'TTFT', color: '#7ec699' },
-              { key: 'latency_ms', label: 'latency', color: '#6ea8fe' },
-            ], 'ms'),
+              { key: 'ttft_ms', label: 'TTFT', color: '#7ec699', swatch: 'ttft' },
+              { key: 'latency_ms', label: 'latency', color: '#6ea8fe', swatch: 'latency' },
+            ], 'ms', state.perfScale),
             chartBlock('TPS (tokens/s)', row.series, [
-              { key: 'tps', label: 'TPS', color: '#e0af68' },
-            ], 'tokens/s'),
+              { key: 'tps', label: 'TPS', color: '#e0af68', swatch: 'tps' },
+            ], 'tokens/s', state.perfScale),
           ]),
           el('h4', { text: 'By connection' }),
           connectionTable(row.source),
@@ -1271,11 +1328,24 @@ async function renderPerformance() {
     load();
   }, 5000);
 
+  const scaleButton = el('button', {
+    class: 'small',
+    text: state.perfScale === 'log' ? 'Log scale' : 'Linear scale',
+    title: 'Toggle the chart axis between linear and logarithmic',
+  });
+  scaleButton.addEventListener('click', () => {
+    state.perfScale = state.perfScale === 'log' ? 'linear' : 'log';
+    localStorage.setItem('lgllm.perf.scale', state.perfScale);
+    scaleButton.textContent = state.perfScale === 'log' ? 'Log scale' : 'Linear scale';
+    draw();
+  });
+
   view.replaceChildren(
     el('h2', { text: 'Performance' }),
     el('div', { class: 'toolbar' }, [
+      scaleButton,
       meta,
-      el('span', { class: 'muted', text: 'p50 of the last N attempts; average remains in the API and metrics; click a row for charts; refresh 5 s' }),
+      el('span', { class: 'muted', text: 'p50 of the last N attempts; average remains in the API and metrics; charts default to linear, log compresses wide spreads; click a row for charts; refresh 5 s' }),
     ]),
     host,
   );
