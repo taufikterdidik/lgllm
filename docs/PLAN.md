@@ -1873,6 +1873,47 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 31. Kolom harga i/o/c di Performance — ✅ SELESAI
+
+> Status: tabel Performance menampilkan harga **input / output / cache read**
+> per 1 juta token untuk model yang punya data harga. Command Code tidak
+> menyediakan harga di `/models`, jadi tabelnya dikurasi dari halaman pricing
+> resmi; OpenCode Go dibaca dari `cost.text` di respons `/models`.
+
+### 31a. Keputusan implementasi — ✅ SELESAI
+
+- **Sumber.** OpenCode Go dari `GET /models` (`cost.text.input.price`,
+  `cost.text.output.price`, `cost.text.input.cache.read`, cache write bila ada).
+  Command Code dari `https://commandcode.ai/docs/resources/pricing-limits#models`
+  karena `/provider/v1/models` tidak membawa harga dan usage respons juga tidak.
+- **Tabel.** `internal/pricing/catalog.go` menyimpan rate per provider/model
+  dalam USD per 1 juta token. Alias `ocg`/`ocga` berbagi tabel yang sama;
+  `cmd`/`cmdc` juga berbagi tabel Command Code.
+- **API.** `GET /api/performance` menambahkan `pricing` berisi `input`,
+  `output`, `cache_read`, `cache_write`, dan `known`. Model custom atau model
+  yang tidak ada di tabel mengembalikan `known: false`.
+- **UI.** Kolom `i/o/c` setelah nama model, sebelum `requests`, berformat
+  `0.15 / 0.6 / 0.003`. Model gratis tampil `free`, model tanpa harga `—`.
+  Tooltip menjelaskan satuan, cache read, dan cache write bila tersedia.
+- **Presisi.** Angka kecil seperti `0.0028` dan `0.08334` tidak dipotong;
+  format membuang nol di belakang.
+- **Batas.** Harga dasar/off-peak; multiplier jam sibuk dan tier context panjang
+  belum diterapkan. Tidak ada network call saat halaman dibuka.
+- **Verifikasi.** Test lookup provider/alias, model gratis, model unknown, dan
+  cakupan seluruh model katalog; API performance; smoke Playwright memastikan
+  baris `opencode-go/qwen4-max` dan `commandcode/Qwen/Qwen4-Max` menampilkan
+  `1.5 / 4.5 / 0.075`.
+
+### 31b. Belum masuk fase 31
+
+- **Harga dinamis.** Tabel masih statis; perubahan harga upstream butuh commit.
+- **Multiplier.** Harga DeepSeek peak dan tier context panjang belum dihitung.
+- **Biaya aktual.** Kolom hanya menampilkan tarif, bukan total biaya request.
+- **Provider custom.** Harga belum bisa diisi lewat config/admin.
+- **Sumber Command Code.** Belum ada generator otomatis dari halaman docs.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1907,6 +1948,7 @@ jujur tanpa menambah lapisan routing baru.
 | 28 | Skala log chart performance | 0,5 hari | ✅ toggle linear/log, sparkline linear |
 | 29 | Sinkronisasi katalog OpenCode Go | 0,5 hari | ✅ 32 model + context upstream |
 | 30 | OpenCode Go Anthropic surface | 0,5 hari | ✅ `opencode-go-anthropic` (`ocga`) |
+| 31 | Kolom harga i/o/c di Performance | 1 hari | ✅ rate per 1M token dari katalog |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

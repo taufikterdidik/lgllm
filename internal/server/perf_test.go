@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"lgllm/internal/config"
 	"lgllm/internal/perf"
 	"lgllm/internal/registry"
 	"lgllm/internal/tokensaver"
@@ -71,8 +72,59 @@ func TestAdminPerformanceShowsWindowAndSplitsModes(t *testing.T) {
 		m.Stream.P50TPS == nil || *m.Stream.P50TPS != 40 {
 		t.Errorf("stream p50 = %+v", m.Stream)
 	}
+	if m.Pricing.Known {
+		t.Error("a custom provider reported a published price")
+	}
 	if m.NonStream.Samples != 0 || m.NonStream.AvgTPS != nil {
 		t.Errorf("non_stream = %+v, want empty with null averages", m.NonStream)
+	}
+}
+
+func TestAdminPerformanceIncludesPricing(t *testing.T) {
+	s, _, _ := newAdminTestServerWith(t, false, func(c *config.Config) {
+		c.Providers = []config.Provider{{ID: "opencode-go"}}
+		c.Connections = []config.Connection{
+			{ID: "go", Provider: "ocg", APIKey: "sk"},
+			{ID: "go-ant", Provider: "ocga", APIKey: "sk"},
+		}
+		c.DefaultProvider = "opencode-go"
+	}, nil)
+
+	res := do(s, adminRequest(http.MethodGet, "/api/performance", adminTestToken, ""))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	var body struct {
+		Data []perfModelDTO `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var chat, anth *perfModelDTO
+	for i := range body.Data {
+		m := &body.Data[i]
+		if m.Model != "qwen4-max" {
+			continue
+		}
+		switch m.Provider {
+		case "opencode-go":
+			chat = m
+		case "opencode-go-anthropic":
+			anth = m
+		}
+	}
+	if chat == nil || anth == nil {
+		t.Fatalf("qwen4-max missing from one surface: chat=%v ant=%v", chat, anth)
+	}
+	for _, m := range []*perfModelDTO{chat, anth} {
+		if !m.Pricing.Known {
+			t.Errorf("%s: pricing unknown", m.Provider)
+			continue
+		}
+		if m.Pricing.Input != 1.5 || m.Pricing.Output != 4.5 ||
+			m.Pricing.CacheRead != 0.075 || m.Pricing.CacheWrite != 1.875 {
+			t.Errorf("%s: pricing = %+v", m.Provider, m.Pricing)
+		}
 	}
 }
 

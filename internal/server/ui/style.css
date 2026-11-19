@@ -79,6 +79,7 @@ tr:hover td { background: #141922; }
 .swatch.latency { background: #6ea8fe; }
 .swatch.tps { background: #e0af68; }
 .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.rates { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; width: min(720px, 92vw); }
 dialog::backdrop { background: #000a; }

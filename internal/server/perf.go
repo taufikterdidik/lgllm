@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lgllm/internal/perf"
+	"lgllm/internal/pricing"
 	"lgllm/internal/translate"
 )
 
@@ -154,11 +155,22 @@ type perfModelDTO struct {
 	LastSeen  *time.Time  `json:"last_seen"`
 	Stream    perfModeDTO `json:"stream"`
 	NonStream perfModeDTO `json:"non_stream"`
+	// Pricing is the published list price per one million tokens. Known is
+	// false for custom providers and models missing from the pricing table.
+	Pricing perfPricingDTO `json:"pricing"`
 	// Connections is the per-credential breakdown for this model. It is empty
 	// when only model-level samples exist.
 	Connections []perfConnectionDTO `json:"connections,omitempty"`
 	// Series is present only with ?series=1, keeping the default payload small.
 	Series []perfSampleDTO `json:"series,omitempty"`
+}
+
+type perfPricingDTO struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cache_read"`
+	CacheWrite float64 `json:"cache_write,omitempty"`
+	Known      bool    `json:"known"`
 }
 
 // handleAdminPerformance serves GET /api/performance.
@@ -218,6 +230,7 @@ func (s *Server) handleAdminPerformance(w http.ResponseWriter, r *http.Request) 
 }
 
 func buildPerfDTO(provider, model string, a perf.Aggregate) perfModelDTO {
+	rate, priced := pricing.ModelRateFor(provider, model)
 	dto := perfModelDTO{
 		Provider:  provider,
 		Model:     model,
@@ -231,6 +244,13 @@ func buildPerfDTO(provider, model string, a perf.Aggregate) perfModelDTO {
 	if !a.LastSeen.IsZero() {
 		seen := a.LastSeen.UTC()
 		dto.LastSeen = &seen
+	}
+	dto.Pricing = perfPricingDTO{
+		Input:      rate.Input,
+		Output:     rate.Output,
+		CacheRead:  rate.CacheRead,
+		CacheWrite: rate.CacheWrite,
+		Known:      priced,
 	}
 	return dto
 }

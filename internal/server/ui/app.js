@@ -974,6 +974,32 @@ function fmtMs(value) {
   return (value < 10 ? value.toFixed(1) : Math.round(value)) + ' ms';
 }
 
+// fmtRate trims trailing zeros while keeping enough precision for cache prices
+// such as 0.0028 or 0.08334.
+function fmtRate(v) {
+  if (typeof v !== 'number' || !isFinite(v)) return 'n/a';
+  if (v === 0) return '0';
+  const decimals = v < 0.01 ? 6 : v < 1 ? 4 : 3;
+  return String(Number(v.toFixed(decimals)));
+}
+
+function ratesCell(pricing) {
+  if (!pricing || !pricing.known) {
+    return el('span', {
+      class: 'muted', text: '—',
+      title: 'No published price for this provider/model',
+    });
+  }
+  if (!pricing.input && !pricing.output && !pricing.cache_read) {
+    return el('span', { class: 'muted', text: 'free', title: 'No charge for this model' });
+  }
+  const text = fmtRate(pricing.input) + ' / ' + fmtRate(pricing.output) + ' / ' +
+    fmtRate(pricing.cache_read);
+  const title = ['USD per 1M tokens: input / output / cache read (base rate)'];
+  if (pricing.cache_write) title.push('cache write: ' + fmtRate(pricing.cache_write));
+  return el('span', { class: 'rates', text, title: title.join(' · ') });
+}
+
 function percentileOrAvg(mode, metric) {
   if (!mode) return undefined;
   const p50 = mode['p50_' + metric];
@@ -1271,15 +1297,20 @@ async function renderPerformance() {
           connectionTable(row.source),
         );
         tbody.appendChild(el('tr', { class: 'perf-detail-row' }, [
-          el('td', { colspan: '9' }, [details]),
+          el('td', { colspan: '10' }, [details]),
         ]));
       }
     }
 
-    const head = el('thead', {}, [el('tr', {}, [
-      'model', 'requests', 'ok', 'TTFT p50', 'latency p50', 'TPS p50', 'TPS trend',
-      'mode', 'last seen',
-    ].map((h) => el('th', { text: h })))]);
+    const headers = ['model', 'i/o/c', 'requests', 'ok', 'TTFT p50', 'latency p50', 'TPS p50',
+      'TPS trend', 'mode', 'last seen'];
+    const head = el('thead', {}, [el('tr', {}, headers.map((h) => {
+      const th = el('th', { text: h });
+      if (h === 'i/o/c') {
+        th.title = 'USD per 1M tokens: input / output / cache read (base rate)';
+      }
+      return th;
+    }))]);
     host.replaceChildren(el('table', {}, [head, tbody]));
     if (payload && payload.data.every((m) => m.attempts === 0)) {
       host.appendChild(el('p', { class: 'muted', text: 'No samples yet — send a request to a model.' }));
@@ -1299,6 +1330,7 @@ async function renderPerformance() {
           tps: percentileOrAvg(mode, 'tps') === undefined ? -1 : percentileOrAvg(mode, 'tps'),
           cells: [
             m.provider + '/' + m.model,
+            ratesCell(m.pricing),
             String(m.attempts),
             String(m.successes),
             fmtMs(percentileOrAvg(mode, 'ttft_ms')),

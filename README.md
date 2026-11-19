@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–30 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–31 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -543,6 +543,15 @@ latency spread so one slow outlier no longer flattens every fast sample, and
 axis labels switch to seconds once they pass 1000 ms. A range smaller than 2x
 stays linear because log would not add information there; the table sparkline
 also stays linear. Failed attempts remain dashed red markers in both modes.
+
+The table also has an **`i/o/c`** column: USD per one million tokens for input,
+output and cache read. It shows the base list price, so time-of-day multipliers
+and long-context tiers beyond the first band are not applied. Free models show
+`free`; a model with no published price shows `—`. OpenCode Go prices come from
+its `/models` response; Command Code has no price field in that endpoint, so its
+table is curated from the published pricing page. `GET /api/performance` returns
+the same numbers under `pricing` (`input`, `output`, `cache_read`,
+`cache_write`, `known`).
 
 The ring is the fast read path. Set `metrics.performance_db` to a bbolt file to
 also persist samples: writes go through a bounded background queue, the latest
