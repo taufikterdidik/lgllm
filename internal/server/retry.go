@@ -82,12 +82,15 @@ func (s *Server) runPlan(w http.ResponseWriter, r *http.Request, req *generation
 		}
 		if !translatable(attempt.Provider.Format) {
 			s.Metrics.ObserveFailure(attempt.Provider.ID, http.StatusNotImplemented)
+			message := fmt.Sprintf("format %q has no translator", attempt.Provider.Format)
+			if attempt.Provider.Format == registry.FormatSystemOne {
+				message = "model is a System One decision model; use POST /v1/systemone"
+			}
 			failures = append(failures, attemptFailure{
 				Provider: attempt.Provider.ID,
 				Model:    attempt.Model,
 				Status:   http.StatusNotImplemented,
-				Error: fmt.Sprintf("format %q has no translator",
-					attempt.Provider.Format),
+				Error:    message,
 			})
 			continue
 		}

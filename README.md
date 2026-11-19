@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–31 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–32 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -213,8 +213,8 @@ client that compacts around `n_ctx` sees the combo minimum rather than the first
 member's size.
 
 They describe models; they never run one. Generation goes through
-`/v1/chat/completions`, `/v1/messages`, or the provider's native generation
-endpoint reached through the translator. Fields that
+`/v1/chat/completions`, `/v1/messages`, `POST /v1/systemone`, or the provider's
+native generation endpoint reached through the translator. Fields that
 describe a local weight file (`size`, `parameter_size`, `quantization_level`,
 `modelfile`, `template`) are empty rather than invented, and `capabilities`
 reports `completion` plus whatever `models[].capabilities` declares in the
@@ -335,10 +335,10 @@ wire_api = "chat"
 ```
 
 Providers are declared in `providers`/`connections`. Everything in the built-in
-catalog (anthropic, commandcode, commandcode-claude, deepseek, gemini, groq,
-mistral, ollama, openai, opencode-go, opencode-go-anthropic, openrouter) only
-needs a connection entry;
-a custom gateway spells out `base_url`, `format` and `auth`. A provider becomes
+catalog (anthropic, commandcode, commandcode-claude, commandcode-systemone,
+deepseek, gemini, groq, mistral, ollama, openai, opencode-go,
+opencode-go-anthropic, opencode-systemone, openrouter) only needs a connection
+entry; a custom gateway spells out `base_url`, `format` and `auth`. A provider becomes
 usable only when at least one enabled connection references it and has a key
 (except `auth: none`, e.g. local Ollama).
 
@@ -421,6 +421,44 @@ models and `commandcode-claude` (`cmdc`) for Claude. Both read
 model hints come from `GET /provider/v1/models`; a model id is still forwarded
 unchanged, so vendor-prefixed ids such as `deepseek/deepseek-v4-flash` work even
 when they are not listed.
+
+### System One decision models
+
+System One models do not generate chat text. They evaluate a `state` against
+typed questions (`noul`, `choice`, `score`) and return probabilities. lgllm
+exposes them on a separate ingress so chat clients never send an incompatible
+body:
+
+```http
+POST /v1/systemone
+```
+
+```json
+{
+  "model": "ocs/jev-1.13-free",
+  "state": "My payments have failed for three days and I am losing sales.",
+  "questions": {
+    "is_urgent": {
+      "type": "noul",
+      "instructions": "Does this request require urgent attention?"
+    }
+  }
+}
+```
+
+Two catalog providers are available:
+
+| Provider | Alias | Models |
+| --- | --- | --- |
+| `commandcode-systemone` | `cmds` | `typesafe/jev`, `typesafe/jev-1.14.0` |
+| `opencode-systemone` | `ocs` | `jev-1.13`, `jev-1.13-free`, `gpt-6-luna-decision`, `gemini-decision-1` |
+
+They use the same credentials as their chat counterparts but need their own
+connection entries. OpenCode System One is the Console endpoint, not the Go
+plan; `jev-1.13-free` works without Console balance. The request body is
+forwarded verbatim apart from the routed `model`, responses are returned
+unchanged, and streaming is rejected. Decision models are intentionally hidden
+from `GET /v1/models` because they are not chat models.
 
 ## Layout
 

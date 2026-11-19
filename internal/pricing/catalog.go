@@ -24,8 +24,9 @@ type ModelRate struct {
 // opencode-go-anthropic shares the chat gateway's prices; commandcode-claude
 // uses the same Command Code table as the chat entry.
 var providerRates = map[string]map[string]ModelRate{
-	"opencode-go": openCodeGoRates,
-	"commandcode": commandCodeRates,
+	"opencode-go":        openCodeGoRates,
+	"opencode-systemone": openCodeSystemOneRates,
+	"commandcode":        commandCodeRates,
 }
 
 // ModelRateFor looks up the list price for a provider/model pair. The provider
@@ -44,7 +45,9 @@ func canonicalProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "ocg", "opencode-go", "ocga", "opencode-go-anthropic":
 		return "opencode-go"
-	case "cmd", "commandcode", "cmdc", "commandcode-claude":
+	case "ocs", "opencode-systemone":
+		return "opencode-systemone"
+	case "cmd", "commandcode", "cmdc", "commandcode-claude", "cmds", "commandcode-systemone":
 		return "commandcode"
 	}
 	return strings.ToLower(strings.TrimSpace(provider))
@@ -85,7 +88,16 @@ var openCodeGoRates = map[string]ModelRate{
 	"step-5-preview":             {Input: 1, Output: 2.7, CacheRead: 0.1, CacheWrite: 0},
 }
 
+var openCodeSystemOneRates = map[string]ModelRate{
+	"jev-1.13":            {Input: 0.042, Output: 0, CacheRead: 0, CacheWrite: 0},
+	"jev-1.13-free":       {Input: 0, Output: 0, CacheRead: 0, CacheWrite: 0},
+	"gpt-6-luna-decision": {Input: 0.1, Output: 0, CacheRead: 0.01, CacheWrite: 0.125},
+	"gemini-decision-1":   {Input: 0.1, Output: 0, CacheRead: 0, CacheWrite: 0},
+}
+
 var commandCodeRates = map[string]ModelRate{
+	"typesafe/jev":                           {Input: 0.042, Output: 0, CacheRead: 0, CacheWrite: 0},
+	"typesafe/jev-1.14.0":                    {Input: 0.042, Output: 0, CacheRead: 0, CacheWrite: 0},
 	"MiniMaxAI/MiniMax-M2.5":                 {Input: 0.3, Output: 1.2, CacheRead: 0.03, CacheWrite: 0},
 	"MiniMaxAI/MiniMax-M2.7":                 {Input: 0.3, Output: 1.2, CacheRead: 0.06, CacheWrite: 0},
 	"MiniMaxAI/MiniMax-M3":                   {Input: 0.3, Output: 1.2, CacheRead: 0.06, CacheWrite: 0},

@@ -279,7 +279,7 @@ func (c *Config) validateProviders(add func(string, ...any)) {
 		// Empty format/auth inherit from the provider catalog, so they are only
 		// validated when explicitly set.
 		if p.Format != "" && !validFormat(p.Format) {
-			add("%s.format %q is not one of openai|anthropic|gemini|openai-responses|ollama", where, p.Format)
+			add("%s.format %q is not one of openai|anthropic|gemini|openai-responses|ollama|systemone", where, p.Format)
 		}
 		switch p.Auth {
 		case "", "bearer", "x-api-key", "none":
@@ -583,7 +583,7 @@ func formatProblems(problems []string) error {
 
 func validFormat(f string) bool {
 	switch f {
-	case "openai", "anthropic", "gemini", "openai-responses", "ollama":
+	case "openai", "anthropic", "gemini", "openai-responses", "ollama", "systemone":
 		return true
 	}
 	return false

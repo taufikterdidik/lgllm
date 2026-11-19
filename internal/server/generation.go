@@ -33,6 +33,7 @@ type ingress int
 const (
 	ingressChat ingress = iota
 	ingressAnthropic
+	ingressSystemOne
 )
 
 // serve handles /v1/chat/completions and /v1/messages.
@@ -422,8 +423,11 @@ func (s *Server) badRequest(w http.ResponseWriter, r *http.Request, in ingress, 
 }
 
 func ingressName(in ingress) string {
-	if in == ingressAnthropic {
+	switch in {
+	case ingressAnthropic:
 		return "anthropic"
+	case ingressSystemOne:
+		return "systemone"
 	}
 	return "openai"
 }

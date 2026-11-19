@@ -28,6 +28,17 @@ func TestModelRateForAliases(t *testing.T) {
 	}
 }
 
+func TestModelRateForSystemOneAliases(t *testing.T) {
+	rate, ok := ModelRateFor("ocs", "jev-1.13-free")
+	if !ok || rate.Input != 0 {
+		t.Errorf("ocga free jev = %+v, %v", rate, ok)
+	}
+	rate, ok = ModelRateFor("cmds", "typesafe/jev")
+	if !ok || rate.Input != 0.042 {
+		t.Errorf("cmds jev = %+v, %v", rate, ok)
+	}
+}
+
 func TestModelRateForFreeAndUnknown(t *testing.T) {
 	rate, ok := ModelRateFor("commandcode", "recursive/flint-v1.0:free")
 	if !ok {
@@ -49,6 +60,17 @@ func TestModelRateForFreeAndUnknown(t *testing.T) {
 // in the dashboard until someone notices.
 func TestCatalogCoverage(t *testing.T) {
 	for _, provider := range []string{"opencode-go", "commandcode", "commandcode-claude"} {
+		b, ok := registry.CatalogByRef(provider)
+		if !ok {
+			t.Fatalf("catalog provider %q is missing", provider)
+		}
+		for _, model := range b.Models {
+			if _, ok := ModelRateFor(provider, model); !ok {
+				t.Errorf("%s/%s has no display rate", provider, model)
+			}
+		}
+	}
+	for _, provider := range []string{"commandcode-systemone", "opencode-systemone"} {
 		b, ok := registry.CatalogByRef(provider)
 		if !ok {
 			t.Fatalf("catalog provider %q is missing", provider)

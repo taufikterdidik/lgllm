@@ -163,6 +163,14 @@ connections:
   #   provider: opencode-go-anthropic  # Anthropic Messages, alias ocga
   #   api_key: ${OPENCODE_GO_API_KEY}
   #
+  # System One decision models use their own endpoint and connection.
+  # - id: opencode-systemone
+  #   provider: opencode-systemone     # Console key, alias ocs
+  #   api_key: ${OPENCODE_API_KEY}
+  # - id: commandcode-systemone
+  #   provider: commandcode-systemone  # alias cmds
+  #   api_key: ${COMMAND_CODE_API_KEY}
+  #
   # - id: gateway-a
   #   provider: mygateway
   #   api_key: ${GATEWAY_API_KEY}

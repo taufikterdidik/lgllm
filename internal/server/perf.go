@@ -10,6 +10,7 @@ import (
 
 	"lgllm/internal/perf"
 	"lgllm/internal/pricing"
+	"lgllm/internal/registry"
 	"lgllm/internal/translate"
 )
 
@@ -199,6 +200,9 @@ func (s *Server) handleAdminPerformance(w http.ResponseWriter, r *http.Request) 
 	providers := s.Registry().Providers()
 	data := make([]perfModelDTO, 0, len(providers))
 	for _, p := range providers {
+		if p.Format == registry.FormatSystemOne {
+			continue // decision timing is not a chat metric
+		}
 		if filter != "" && filter != p.ID && filter != p.Alias {
 			continue
 		}

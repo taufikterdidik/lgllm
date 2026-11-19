@@ -161,6 +161,55 @@ func TestOpenCodeGoAnthropicCatalog(t *testing.T) {
 	}
 }
 
+func TestSystemOneCatalog(t *testing.T) {
+	cmd, ok := CatalogByRef("cmds")
+	if !ok {
+		t.Fatal("commandcode-systemone is missing from the catalog")
+	}
+	if cmd.ID != "commandcode-systemone" || cmd.Format != FormatSystemOne {
+		t.Errorf("id/format = %q/%q", cmd.ID, cmd.Format)
+	}
+	if cmd.BaseURL != "https://api.commandcode.ai/provider/v1" {
+		t.Errorf("base_url = %q", cmd.BaseURL)
+	}
+	if !containsString(cmd.Models, "typesafe/jev") {
+		t.Error("commandcode-systemone does not advertise typesafe/jev")
+	}
+
+	oc, ok := CatalogByRef("ocs")
+	if !ok {
+		t.Fatal("opencode-systemone is missing from the catalog")
+	}
+	if oc.ID != "opencode-systemone" || oc.Format != FormatSystemOne {
+		t.Errorf("id/format = %q/%q", oc.ID, oc.Format)
+	}
+	if oc.BaseURL != "https://opencode.ai/inference/systemone/v1" {
+		t.Errorf("base_url = %q", oc.BaseURL)
+	}
+	for _, model := range []string{"jev-1.13", "jev-1.13-free", "gpt-6-luna-decision", "gemini-decision-1"} {
+		if !containsString(oc.Models, model) {
+			t.Errorf("opencode-systemone is missing %q", model)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Connections = []config.Connection{
+		{ID: "cmds", Provider: "cmds", APIKey: "key"},
+		{ID: "ocs", Provider: "ocs", APIKey: "key"},
+	}
+	reg, err := New(&cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	p, model, err := reg.Resolve("ocs/jev-1.13-free")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if p.ID != "opencode-systemone" || model != "jev-1.13-free" {
+		t.Errorf("route = %s/%s", p.ID, model)
+	}
+}
+
 func TestCommandCodeCatalog(t *testing.T) {
 	chat, ok := CatalogByRef("cmd")
 	if !ok {

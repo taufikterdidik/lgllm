@@ -146,6 +146,9 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	reg := s.Registry()
 	data := make([]modelObject, 0, 16)
 	for _, p := range reg.Providers() {
+		if p.Format == registry.FormatSystemOne {
+			continue // decision models are not chat models
+		}
 		for _, m := range p.Models {
 			obj := modelObject{
 				ID:      modelRef(p, m),
@@ -166,6 +169,9 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	// this list can still use them. They are appended after the concrete models
 	// because owned_by has no single answer for a combo.
 	for _, a := range reg.Aliases() {
+		if a.Target.Provider.Format == registry.FormatSystemOne {
+			continue
+		}
 		obj := modelObject{
 			ID:      a.Name,
 			Object:  "model",
@@ -180,6 +186,16 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		data = append(data, obj)
 	}
 	for _, c := range reg.Combos() {
+		chat := false
+		for _, m := range c.Members {
+			if m.Provider.Format != registry.FormatSystemOne {
+				chat = true
+				break
+			}
+		}
+		if !chat {
+			continue
+		}
 		obj := modelObject{
 			ID:      c.Name,
 			Object:  "model",

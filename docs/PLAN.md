@@ -1914,6 +1914,51 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 32. Routing System One (Jev) — ✅ SELESAI
+
+> Status: model keputusan TypeSafe System One bisa dipanggil lewat
+> `POST /v1/systemone` dari Command Code dan OpenCode Console. Ini menutup item
+> yang ditunda di fase 15.
+
+### 32a. Keputusan implementasi — ✅ SELESAI
+
+- **Provider.** `commandcode-systemone` (`cmds`) memakai base Command Code dan
+  model `typesafe/jev` serta `typesafe/jev-1.14.0`. `opencode-systemone` (`ocs`)
+  memakai base `https://opencode.ai/inference/systemone/v1` dan model
+  `jev-1.13`, `jev-1.13-free`, `gpt-6-luna-decision`, `gemini-decision-1`.
+- **Format.** `FormatSystemOne` ditambahkan ke registry dan validasi config.
+- **Ingress.** `POST /v1/systemone` menerima body System One (`model`, `state`,
+  `questions`), menulis ulang hanya field `model`, lalu meneruskan body apa
+  adanya. Respons upstream dikembalikan verbatim.
+- **Routing.** Memakai `registry.Plan`, jadi mendukung `provider/model`, alias,
+  dan combo. Member non-System One dilewati; jika tidak ada member yang cocok,
+  request ditolak `400`.
+- **Ketahanan.** Rotasi connection, cooldown berdasarkan status, `max_concurrent`
+  per connection, dan fallback combo berlaku seperti chat.
+- **Streaming.** Ditolak `400` karena System One tidak pernah streaming.
+- **Listing.** Model System One tidak dimunculkan di `/v1/models`; chat ke model
+  tersebut menghasilkan `501` dengan arahan ke `/v1/systemone`.
+- **Usage.** `usage.input_tokens`/`output_tokens` dicatat ke usage log, metrik
+  token, dan kuota harian. Ingress baru bernama `systemone`.
+- **Harga.** Rate Jev/decision ditambahkan ke tabel pricing, termasuk
+  `jev-1.13-free` = 0.
+- **Verifikasi.** Unit test proxy, rewrite model, combo fallback, filter listing,
+  penolakan streaming, dan chat 501; e2e nyata ke kedua upstream lewat lgllm
+  mengembalikan `200` dengan `answers`.
+- **Catatan.** Jev OpenCode adalah Console, bukan paket Go; `jev-1.13-free`
+  berjalan dengan key Console yang ada.
+
+### 32b. Belum masuk fase 32
+
+- **Streaming.** Tidak ada dan tidak direncanakan di upstream.
+- **UI khusus.** Belum ada form System One; pemakaian lewat HTTP.
+- **Multi-question limit.** Batas 20 pertanyaan Command Code diteruskan apa
+  adanya, belum divalidasi di proxy.
+- **Biaya.** Estimasi biaya usage memakai tabel harga chat; model decision
+  dilaporkan `cost_known=false` sampai estimator disatukan.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1949,6 +1994,7 @@ jujur tanpa menambah lapisan routing baru.
 | 29 | Sinkronisasi katalog OpenCode Go | 0,5 hari | ✅ 32 model + context upstream |
 | 30 | OpenCode Go Anthropic surface | 0,5 hari | ✅ `opencode-go-anthropic` (`ocga`) |
 | 31 | Kolom harga i/o/c di Performance | 1 hari | ✅ rate per 1M token dari katalog |
+| 32 | Routing System One (Jev) | 1 hari | ✅ `/v1/systemone` + `cmds`/`ocs` |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

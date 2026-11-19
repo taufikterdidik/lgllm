@@ -65,6 +65,9 @@ func (s *Server) handleAPITags(w http.ResponseWriter, r *http.Request) {
 
 	models := make([]ollamaModel, 0, 8)
 	for _, p := range reg.Providers() {
+		if p.Format == registry.FormatSystemOne {
+			continue
+		}
 		for _, m := range p.Models {
 			ref := modelRef(p, m)
 			models = append(models, ollamaModel{
@@ -83,6 +86,9 @@ func (s *Server) handleAPITags(w http.ResponseWriter, r *http.Request) {
 	// picks from. They have no upstream model of their own, so the target's
 	// capabilities are reported and size stays zero.
 	for _, a := range reg.Aliases() {
+		if a.Target.Provider.Format == registry.FormatSystemOne {
+			continue
+		}
 		models = append(models, ollamaModel{
 			Name:         a.Name,
 			Model:        a.Name,
@@ -93,6 +99,16 @@ func (s *Server) handleAPITags(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	for _, c := range reg.Combos() {
+		chat := false
+		for _, m := range c.Members {
+			if m.Provider.Format != registry.FormatSystemOne {
+				chat = true
+				break
+			}
+		}
+		if !chat {
+			continue
+		}
 		models = append(models, ollamaModel{
 			Name:         c.Name,
 			Model:        c.Name,

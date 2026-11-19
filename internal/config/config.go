@@ -82,7 +82,7 @@ type Provider struct {
 	// BaseURL is the API root including the version segment,
 	// e.g. "https://api.openai.com/v1". Endpoint paths are appended to it.
 	BaseURL string `yaml:"base_url"`
-	// Format is the wire protocol: openai|anthropic|gemini|openai-responses|ollama.
+	// Format is the wire protocol: openai|anthropic|gemini|openai-responses|ollama|systemone.
 	Format string `yaml:"format"`
 	// Auth is the outbound scheme: bearer|x-api-key|query|none.
 	Auth string `yaml:"auth"`

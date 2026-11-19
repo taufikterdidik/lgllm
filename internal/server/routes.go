@@ -55,6 +55,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/model/{model...}", s.handleOpenRouterModel)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	s.mux.HandleFunc("POST /v1/messages", s.handleAnthropicMessages)
+	s.mux.HandleFunc("POST /v1/systemone", s.handleSystemOne)
 
 	// Compatibility endpoints: the same data in the dialect another server
 	// would speak, so a client that probes these can discover what to route.
@@ -141,6 +142,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"GET /props",
 			"POST /v1/chat/completions",
 			"POST /v1/messages",
+			"POST /v1/systemone",
 		},
 	})
 }

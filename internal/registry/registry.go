@@ -32,6 +32,7 @@ const (
 	FormatGemini    = "gemini"           // generateContent
 	FormatResponses = "openai-responses" // responses API
 	FormatOllama    = "ollama"           // native /api/chat
+	FormatSystemOne = "systemone"        // TypeSafe System One decision endpoint
 )
 
 var (
@@ -385,6 +386,19 @@ var catalog = []Builtin{
 		KeyEnv: "COMMAND_CODE_API_KEY", Site: "https://commandcode.ai/docs/provider",
 	},
 	{
+		// System One is a decision API, not chat: the body carries a state and
+		// typed questions and the response carries probabilities. It shares the
+		// Command Code base and credential but has its own endpoint and models.
+		ID: "commandcode-systemone", Alias: "cmds", Name: "Command Code (System One)",
+		BaseURL: "https://api.commandcode.ai/provider/v1",
+		Format:  FormatSystemOne, Auth: "bearer",
+		Models: []string{
+			"typesafe/jev",
+			"typesafe/jev-1.14.0",
+		},
+		KeyEnv: "COMMAND_CODE_API_KEY", Site: "https://commandcode.ai/docs/provider",
+	},
+	{
 		ID: "deepseek", Alias: "ds", Name: "DeepSeek",
 		BaseURL: "https://api.deepseek.com/v1",
 		Format:  FormatChat, Auth: "bearer",
@@ -452,6 +466,21 @@ var catalog = []Builtin{
 		Models:        openCodeGoModels,
 		Contexts:      openCodeGoContexts,
 		KeyEnv:        "OPENCODE_GO_API_KEY", Site: "https://opencode.ai/docs/go",
+	},
+	{
+		// Jev and the other decision models live on the Console System One
+		// endpoint, not on the Go chat gateway. They share the Console key but
+		// are not part of the Go plan.
+		ID: "opencode-systemone", Alias: "ocs", Name: "OpenCode System One",
+		BaseURL: "https://opencode.ai/inference/systemone/v1",
+		Format:  FormatSystemOne, Auth: "bearer",
+		Models: []string{
+			"jev-1.13",
+			"jev-1.13-free",
+			"gpt-6-luna-decision",
+			"gemini-decision-1",
+		},
+		KeyEnv: "OPENCODE_API_KEY", Site: "https://opencode.ai/docs/console/models",
 	},
 	{
 		ID: "openai", Alias: "oa", Name: "openai",
@@ -644,10 +673,10 @@ func Validate(cfg *config.Config) error {
 			add("provider %q base_url: %v", p.ID, err)
 		}
 		switch p.Format {
-		case FormatChat, FormatAnthropic, FormatGemini, FormatResponses, FormatOllama:
+		case FormatChat, FormatAnthropic, FormatGemini, FormatResponses, FormatOllama, FormatSystemOne:
 		default:
-			add("provider %q format %q is not one of %s|%s|%s|%s|%s",
-				p.ID, p.Format, FormatChat, FormatAnthropic, FormatGemini, FormatResponses, FormatOllama)
+			add("provider %q format %q is not one of %s|%s|%s|%s|%s|%s",
+				p.ID, p.Format, FormatChat, FormatAnthropic, FormatGemini, FormatResponses, FormatOllama, FormatSystemOne)
 		}
 		switch p.Auth {
 		case "bearer", "x-api-key", "none":

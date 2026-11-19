@@ -65,6 +65,7 @@ const FORMAT_OPTIONS = [
   { value: 'gemini', label: 'Gemini generateContent' },
   { value: 'openai-responses', label: 'OpenAI Responses' },
   { value: 'ollama', label: 'Ollama native' },
+  { value: 'systemone', label: 'System One (decision)' },
 ];
 
 const AUTH_OPTIONS = [
@@ -742,7 +743,7 @@ async function renderProviders() {
         onclick: () => openProviderForm(p, catalog.data, payload.data),
       }));
     }
-    if (p.connected) actions.push(testConnection(p.id));
+    if (p.connected && p.format !== 'systemone') actions.push(testConnection(p.id));
     if (p.managed === 'admin') {
       actions.push(el('button', {
         class: 'danger small', text: 'Delete',
@@ -793,6 +794,7 @@ async function renderConnections() {
   ]);
   const rows = payload.data.map((c) => {
     const actions = [];
+    const format = (providers.data.find((p) => p.id === c.provider || p.alias === c.provider) || {}).format;
     if (c.managed === 'admin') {
       actions.push(el('button', {
         class: 'small', text: 'Edit',
@@ -809,7 +811,7 @@ async function renderConnections() {
         },
       }));
     }
-    if (!c.disabled) actions.push(testConnection(c.provider, c.id));
+    if (!c.disabled && format !== 'systemone') actions.push(testConnection(c.provider, c.id));
     return [
       c.id,
       c.provider,
