@@ -122,6 +122,10 @@ func TestOpenCodeGoAnthropicCatalog(t *testing.T) {
 	if !containsString(b.Models, "qwen4-max") {
 		t.Error("qwen4-max is missing from the Anthropic surface")
 	}
+	caps := b.Capabilities["qwen4-max"]
+	if !caps["tools"] || !caps["vision"] || !caps["reasoning"] {
+		t.Errorf("qwen4-max capabilities = %v", caps)
+	}
 	if len(b.Models) != len(openCodeGoModels) {
 		t.Errorf("models = %d, want the shared Go list (%d)", len(b.Models), len(openCodeGoModels))
 	}
@@ -233,6 +237,9 @@ func TestCommandCodeCatalog(t *testing.T) {
 	if !containsString(chat.Models, "deepseek/deepseek-v4-flash") {
 		t.Error("a known chat model is missing")
 	}
+	if caps := chat.Capabilities["Qwen/Qwen4-Max"]; !caps["tools"] || !caps["vision"] || !caps["reasoning"] {
+		t.Errorf("Qwen4-Max capabilities = %v", caps)
+	}
 	for _, id := range []string{
 		"Qwen/Qwen4-Max",
 		"tencent/hy4-flash",
@@ -262,6 +269,9 @@ func TestCommandCodeCatalog(t *testing.T) {
 	}
 	if claude.BaseURL != chat.BaseURL || claude.KeyEnv != chat.KeyEnv {
 		t.Errorf("Claude entry does not share the base URL and key env")
+	}
+	if caps := claude.Capabilities["claude-haiku-4-5-20251001"]; !caps["tools"] || !caps["vision"] {
+		t.Errorf("Claude Haiku capabilities = %v", caps)
 	}
 	if len(claude.Models) == 0 {
 		t.Error("Claude entry has no model hints")

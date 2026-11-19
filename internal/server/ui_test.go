@@ -54,6 +54,9 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 	if !strings.Contains(js.Body.String(), "i/o/c") || !strings.Contains(js.Body.String(), "ratesCell") {
 		t.Error("app.js does not render the pricing column")
 	}
+	if !strings.Contains(js.Body.String(), "capabilityIcons") {
+		t.Error("app.js does not render model capability icons")
+	}
 	if !strings.Contains(js.Body.String(), "/api/providers?all=1") ||
 		!strings.Contains(js.Body.String(), "/api/catalog") {
 		t.Error("app.js does not load the provider catalog")

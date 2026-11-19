@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–32 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–33 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -590,6 +590,11 @@ its `/models` response; Command Code has no price field in that endpoint, so its
 table is curated from the published pricing page. `GET /api/performance` returns
 the same numbers under `pricing` (`input`, `output`, `cache_read`,
 `cache_write`, `known`).
+
+The model cell shows small capability icons underneath the name: a wrench for
+tool calls, an eye for vision, and a lightbulb for reasoning. Hints come from the
+catalog (OpenCode's `/models` flags and Command Code's model documentation) and
+from `models[].capabilities` in config; models without hints show no icons.
 
 The ring is the fast read path. Set `metrics.performance_db` to a bbolt file to
 also persist samples: writes go through a bounded background queue, the latest

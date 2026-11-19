@@ -80,6 +80,9 @@ tr:hover td { background: #141922; }
 .swatch.tps { background: #e0af68; }
 .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
 .rates { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.perf-model { display: flex; flex-direction: column; gap: 2px; }
+.caps { display: flex; gap: 5px; color: var(--muted); }
+.cap-icon { width: 12px; height: 12px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; width: min(720px, 92vw); }
 dialog::backdrop { background: #000a; }

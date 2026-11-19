@@ -125,6 +125,9 @@ func TestAdminPerformanceIncludesPricing(t *testing.T) {
 			m.Pricing.CacheRead != 0.075 || m.Pricing.CacheWrite != 1.875 {
 			t.Errorf("%s: pricing = %+v", m.Provider, m.Pricing)
 		}
+		if !m.Capabilities["tools"] || !m.Capabilities["vision"] || !m.Capabilities["reasoning"] {
+			t.Errorf("%s: capabilities = %v", m.Provider, m.Capabilities)
+		}
 	}
 }
 

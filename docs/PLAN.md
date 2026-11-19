@@ -1959,6 +1959,41 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 33. Ikon kapabilitas di tabel Performance — ✅ SELESAI
+
+> Status: nama model di tabel Performance menampilkan ikon kecil di bawahnya
+> untuk tool call, vision, dan reasoning bila katalog/config menyatakan
+> kapabilitas tersebut.
+
+### 33a. Keputusan implementasi — ✅ SELESAI
+
+- **API.** `GET /api/performance` menambahkan `capabilities` per model dari
+  `registry.Model.Capabilities`.
+- **Sumber data.** OpenCode Go memakai flag `tools`, `reasoning`, dan modality
+  gambar dari `/models`. Command Code memakai label Vision/Reasoning di halaman
+  model resmi; tool call dianggap tersedia untuk model chat-nya. Config
+  `models[].capabilities` tetap menang bila model dideklarasikan ulang.
+- **UI.** Di bawah nama model muncul ikon inline SVG: kunci untuk tool calls,
+  mata untuk vision, lampu untuk reasoning. Setiap ikon punya tooltip; model
+  tanpa hint tidak menampilkan baris ikon.
+- **Alias capability.** `tools`, `tool_call`, `tool_calls`, `function_calling`
+  dianggap sama; `reasoning` dan `thinking` juga dianggap sama.
+- **Cakupan.** Ikon hanya tampil di tabel Performance; kolom per-connection
+  tidak diubah. Model System One tetap tidak masuk halaman ini.
+- **Verifikasi.** Test katalog untuk OpenCode/Command Code, test API, UI statis,
+  dan smoke Playwright: baris `opencode-go/qwen4-max` serta
+  `commandcode/Qwen/Qwen4-Max` menampilkan tiga ikon dengan tooltip yang benar.
+
+### 33b. Belum masuk fase 33
+
+- **Capability tambahan.** structured output, cache, audio/video belum punya
+  ikon.
+- **Data Command Code.** Tool call dianggap provider-wide, bukan per model.
+- **Legenda.** Belum ada legenda global; tooltip per ikon menjadi penjelas.
+- **Filter/sort.** Ikon belum bisa dipakai untuk memfilter tabel.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -1995,6 +2030,7 @@ jujur tanpa menambah lapisan routing baru.
 | 30 | OpenCode Go Anthropic surface | 0,5 hari | ✅ `opencode-go-anthropic` (`ocga`) |
 | 31 | Kolom harga i/o/c di Performance | 1 hari | ✅ rate per 1M token dari katalog |
 | 32 | Routing System One (Jev) | 1 hari | ✅ `/v1/systemone` + `cmds`/`ocs` |
+| 33 | Ikon kapabilitas di Performance | 0,5 hari | ✅ tools/vision/reasoning |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

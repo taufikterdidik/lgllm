@@ -61,6 +61,8 @@ type Builtin struct {
 	// Contexts optionally records known context windows for catalog models.
 	// Missing entries mean "unknown", not zero tokens.
 	Contexts map[string]int
+	// Capabilities records display hints per model (tools, vision, reasoning).
+	Capabilities map[string]map[string]bool
 	// KeyEnv is the conventional environment variable for the API key.
 	KeyEnv string
 	Site   string
@@ -349,7 +351,8 @@ var catalog = []Builtin{
 			"xai/grok-4.7":                           500_000,
 			"mistral/mistral-large-4":                524_288,
 		},
-		KeyEnv: "COMMAND_CODE_API_KEY", Site: "https://commandcode.ai/docs/provider",
+		Capabilities: commandCodeCapabilities,
+		KeyEnv:       "COMMAND_CODE_API_KEY", Site: "https://commandcode.ai/docs/provider",
 	},
 	{
 		ID: "commandcode-claude", Alias: "cmdc", Name: "Command Code (Claude)",
@@ -383,7 +386,8 @@ var catalog = []Builtin{
 			"claude-haiku-5-5":          1_000_000,
 			"claude-haiku-4-5-20251001": 200_000,
 		},
-		KeyEnv: "COMMAND_CODE_API_KEY", Site: "https://commandcode.ai/docs/provider",
+		Capabilities: commandCodeCapabilities,
+		KeyEnv:       "COMMAND_CODE_API_KEY", Site: "https://commandcode.ai/docs/provider",
 	},
 	{
 		// System One is a decision API, not chat: the body carries a state and
@@ -453,6 +457,7 @@ var catalog = []Builtin{
 		SessionHeader: "x-opencode-session",
 		Models:        openCodeGoModels,
 		Contexts:      openCodeGoContexts,
+		Capabilities:  openCodeGoCapabilities,
 		KeyEnv:        "OPENCODE_GO_API_KEY", Site: "https://opencode.ai/docs/go",
 	},
 	{
@@ -465,6 +470,7 @@ var catalog = []Builtin{
 		SessionHeader: "x-opencode-session",
 		Models:        openCodeGoModels,
 		Contexts:      openCodeGoContexts,
+		Capabilities:  openCodeGoCapabilities,
 		KeyEnv:        "OPENCODE_GO_API_KEY", Site: "https://opencode.ai/docs/go",
 	},
 	{
@@ -596,6 +602,9 @@ func fromCatalog(b Builtin) config.Provider {
 		model := config.Model{ID: m, Name: m}
 		if context := b.Contexts[m]; context > 0 {
 			model.Context = context
+		}
+		if caps := b.Capabilities[m]; len(caps) > 0 {
+			model.Capabilities = copyBoolMap(caps)
 		}
 		p.Models = append(p.Models, model)
 	}

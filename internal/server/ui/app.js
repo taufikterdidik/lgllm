@@ -1002,6 +1002,42 @@ function ratesCell(pricing) {
   return el('span', { class: 'rates', text, title: title.join(' · ') });
 }
 
+// capabilityIcons renders the small catalog hints under a model name. The
+// catalog uses "tools", "vision" and "reasoning"; configs may use "thinking"
+// or the tool aliases, so all spellings are accepted.
+function capabilityIcons(caps) {
+  if (!caps) return null;
+  const has = (...names) => names.some((name) => caps[name]);
+  const icon = (cls, label, paths) => svgEl('svg', {
+    class: 'cap-icon ' + cls, viewBox: '0 0 24 24', role: 'img',
+  }, [svgEl('title', {}, [label]), ...paths.map((d) => svgEl('path', { d }))]);
+  const icons = [];
+  if (has('tools', 'tool_call', 'tool_calls', 'function_calling')) {
+    icons.push(icon('cap-tools', 'Tool calls', [
+      'M14.7 6.3a4 4 0 0 1-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.1 2.1-2.1-2.1 2.2-2z',
+    ]));
+  }
+  if (has('vision', 'image')) {
+    icons.push(icon('cap-vision', 'Vision', [
+      'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z',
+      'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+    ]));
+  }
+  if (has('reasoning', 'thinking')) {
+    icons.push(icon('cap-reasoning', 'Reasoning', [
+      'M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c1 .8 1 1.5 1 2h6c0-.5 0-1.2 1-2a7 7 0 0 0-4-12z',
+    ]));
+  }
+  return icons.length ? el('span', { class: 'caps' }, icons) : null;
+}
+
+function perfModelCell(key, caps) {
+  const node = el('div', { class: 'perf-model' }, [el('span', { text: key })]);
+  const icons = capabilityIcons(caps);
+  if (icons) node.appendChild(icons);
+  return node;
+}
+
 function percentileOrAvg(mode, metric) {
   if (!mode) return undefined;
   const p50 = mode['p50_' + metric];
@@ -1275,7 +1311,7 @@ async function renderPerformance() {
       const open = expanded.has(key);
       const caret = el('span', { class: 'caret', text: open ? '▾' : '▸' });
       const tr = el('tr', { class: 'perf-row' });
-      tr.appendChild(el('td', {}, [caret, document.createTextNode(' ' + key)]));
+      tr.appendChild(el('td', {}, [caret, document.createTextNode(' '), row.modelNode]));
       for (const cell of row.cells.slice(1)) tr.appendChild(el('td', {}, [cell]));
       tr.addEventListener('click', () => {
         if (expanded.has(key)) expanded.delete(key);
@@ -1329,6 +1365,7 @@ async function renderPerformance() {
           model: m.model,
           source: m,
           series: m.series || [],
+          modelNode: perfModelCell(m.provider + '/' + m.model, m.capabilities),
           tps: percentileOrAvg(mode, 'tps') === undefined ? -1 : percentileOrAvg(mode, 'tps'),
           cells: [
             m.provider + '/' + m.model,

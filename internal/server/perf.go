@@ -159,6 +159,9 @@ type perfModelDTO struct {
 	// Pricing is the published list price per one million tokens. Known is
 	// false for custom providers and models missing from the pricing table.
 	Pricing perfPricingDTO `json:"pricing"`
+	// Capabilities are the display hints (tools, vision, reasoning) declared
+	// by the catalog or config.
+	Capabilities map[string]bool `json:"capabilities,omitempty"`
 	// Connections is the per-credential breakdown for this model. It is empty
 	// when only model-level samples exist.
 	Connections []perfConnectionDTO `json:"connections,omitempty"`
@@ -209,6 +212,7 @@ func (s *Server) handleAdminPerformance(w http.ResponseWriter, r *http.Request) 
 		for _, m := range p.Models {
 			k := p.ID + "/" + m.ID
 			dto := buildPerfDTO(p.ID, m.ID, byKey[k])
+			dto.Capabilities = m.Capabilities
 			for _, c := range connByKey[k] {
 				dto.Connections = append(dto.Connections, buildPerfConnectionDTO(c))
 			}
