@@ -41,6 +41,14 @@ func ModelRateFor(provider, model string) (ModelRate, bool) {
 	return rate, ok
 }
 
+// hasProviderRates reports whether the provider has a dedicated catalog. A
+// built-in provider must not fall back to another vendor's prices: a model that
+// is absent from its catalog has an unknown price, not a guessed one.
+func hasProviderRates(provider string) bool {
+	_, ok := providerRates[canonicalProvider(provider)]
+	return ok
+}
+
 func canonicalProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "ocg", "opencode-go", "ocga", "opencode-go-anthropic":

@@ -86,3 +86,23 @@ func Estimate(model string, promptTokens, completionTokens int) (usd float64, kn
 		float64(completionTokens)*rate.Output/1e6
 	return usd, true
 }
+
+// EstimateFor is Estimate with the provider's own catalog applied first.
+//
+// Built-in providers publish a complete model table, so a model missing from
+// that table is reported as unknown instead of being priced with a generic
+// table that may belong to a different reseller. Custom providers keep the
+// generic longest-prefix fallback. Cache reads are not separated in the usage
+// entry, so every prompt token is charged at the input rate.
+func EstimateFor(provider, model string, promptTokens, completionTokens int) (usd float64, known bool) {
+	if hasProviderRates(provider) {
+		rate, ok := ModelRateFor(provider, model)
+		if !ok {
+			return 0, false
+		}
+		usd = float64(promptTokens)*rate.Input/1e6 +
+			float64(completionTokens)*rate.Output/1e6
+		return usd, true
+	}
+	return Estimate(model, promptTokens, completionTokens)
+}

@@ -328,13 +328,11 @@ func (s *Server) tryConnection(
 			}
 		}
 		s.Balancer.Succeed(conn.ID)
-		// A stream has no usage until the provider chooses to send it; counting
-		// tokens here would require parsing every chunk. Phase 7 records zero.
-		s.recordRequest(req, provider.ID, model, http.StatusOK, 0, 0, "")
 
 		if !needsTranslation {
 			n, relayErr := s.relayVerbatim(w, resp)
 			s.finishStream(r, log, provider, model, conn.ID, start, n, tap, relayErr, req.stats)
+			s.recordStreamRequest(req, provider.ID, model, tap)
 			return true, nil
 		}
 		stages := make([]translate.Converter, 0, 2)
@@ -343,6 +341,7 @@ func (s *Server) tryConnection(
 			if !ok {
 				s.writeError(w, req.in, http.StatusNotImplemented,
 					"stream translation is not available for this provider format", "not_implemented")
+				s.recordStreamRequest(req, provider.ID, model, tap)
 				return true, nil
 			}
 			stages = append(stages, conv)
@@ -352,6 +351,7 @@ func (s *Server) tryConnection(
 		}
 		n, relayErr := s.pipeConverted(w, r, resp, stages...)
 		s.finishStream(r, log, provider, model, conn.ID, start, n, tap, relayErr, req.stats)
+		s.recordStreamRequest(req, provider.ID, model, tap)
 		return true, nil
 	}
 

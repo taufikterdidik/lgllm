@@ -389,6 +389,15 @@ func TestAdminUsageAndTestConnection(t *testing.T) {
 		t.Errorf("tokens = %+v", payload.Data[0])
 	}
 
+	clientUsage := do(s, adminRequest(http.MethodGet, "/api/usage?group=client", adminTestToken, ""))
+	if clientUsage.Code != http.StatusOK {
+		t.Fatalf("client usage status = %d, body = %s", clientUsage.Code, clientUsage.Body)
+	}
+	if !strings.Contains(clientUsage.Body.String(), `"key":"local"`) ||
+		!strings.Contains(clientUsage.Body.String(), `"client_key":"local"`) {
+		t.Errorf("local client bucket missing: %s", clientUsage.Body)
+	}
+
 	test := do(s, adminRequest(http.MethodPost, "/api/test-connection", adminTestToken, `{"provider":"testprov"}`))
 	if test.Code != http.StatusOK {
 		t.Fatalf("test-connection status = %d, body = %s", test.Code, test.Body)
@@ -403,6 +412,45 @@ func TestAdminUsageAndTestConnection(t *testing.T) {
 	}
 	if !result.OK || !result.Reachable || result.Status != 200 {
 		t.Errorf("test-connection = %+v", result)
+	}
+}
+
+func TestAdminUsageGroupsByClientKey(t *testing.T) {
+	s, mgr, _ := newAdminTestServer(t, true)
+	const raw = "sk-test-named-client-key"
+	if err := mgr.AddKeyNamed(raw, "laptop"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"testprov/test-model","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer "+raw)
+	if res := do(s, req); res.Code != http.StatusOK {
+		t.Fatalf("chat status = %d, body = %s", res.Code, res.Body)
+	}
+
+	res := do(s, adminRequest(http.MethodGet, "/api/usage?group=client", adminTestToken, ""))
+	if res.Code != http.StatusOK {
+		t.Fatalf("usage status = %d, body = %s", res.Code, res.Body)
+	}
+	var payload struct {
+		Group string `json:"group"`
+		Data  []struct {
+			Key       string `json:"key"`
+			ClientKey string `json:"client_key"`
+			Requests  int    `json:"requests"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("body = %s: %v", res.Body, err)
+	}
+	if payload.Group != "client" || len(payload.Data) != 1 {
+		t.Fatalf("usage = %+v", payload)
+	}
+	wantKey := "key:" + admin.KeyID(raw)
+	if payload.Data[0].Key != "laptop" || payload.Data[0].ClientKey != wantKey ||
+		payload.Data[0].Requests != 1 {
+		t.Errorf("bucket = %+v, want key laptop / %s", payload.Data[0], wantKey)
 	}
 }
 

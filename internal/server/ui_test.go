@@ -57,6 +57,15 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 	if !strings.Contains(js.Body.String(), "capabilityIcons") {
 		t.Error("app.js does not render model capability icons")
 	}
+	if !strings.Contains(js.Body.String(), "PERF_SORT_DEFAULT_DIR") ||
+		!strings.Contains(js.Body.String(), "lgllm.perf.sort") ||
+		!strings.Contains(js.Body.String(), "comparePerfRows") {
+		t.Error("app.js does not implement dynamic performance sorting")
+	}
+	if !strings.Contains(js.Body.String(), "usageCostCell") ||
+		!strings.Contains(js.Body.String(), "client key") {
+		t.Error("app.js does not render usage cost and the client-key grouping")
+	}
 	if !strings.Contains(js.Body.String(), "/api/providers?all=1") ||
 		!strings.Contains(js.Body.String(), "/api/catalog") {
 		t.Error("app.js does not load the provider catalog")

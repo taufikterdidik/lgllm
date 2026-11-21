@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–33 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–34 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -236,11 +236,17 @@ keys. Without a token it is loopback-only and a public bind is refused.
 | `/api/combos` | `GET`, `POST`; `PUT/DELETE /api/combos/{name}` |
 | `/api/keys` | `GET`, `POST`; `PUT/DELETE /api/keys/{id}` |
 | `/api/keys/generate` | `POST` with optional `{ "name": "..." }`; returns a new `sk-lgllm-...` key once |
-| `/api/usage?from=&to=&group=provider\|model\|day` | `GET` |
+| `/api/usage?from=&to=&group=provider\|model\|client\|day` | `GET` |
 | `/api/performance?provider=` | `GET` (recent TTFT/latency/TPS per model) |
 | `/api/logs?limit=N` | `GET` |
 | `/api/logs/stream` | `GET` (SSE, live entries) |
 | `/api/test-connection` | `POST {"provider":"...","model":"...","connection":"..."}` |
+
+`/api/usage?group=client` aggregates by the anonymized client identity used for
+rate limiting. Admin-created keys show their name; keys that only exist in
+`auth.keys` show `key:<hash>` and trusted loopback traffic shows `local`. The
+response also carries `client_key` (the identity) and `unpriced_requests` (how
+many entries had no published price, making the total a lower bound).
 
 The main `config.yaml` is never rewritten (it may contain `${ENV}` references and
 comments). API-created resources live in `admin.yaml` next to it, merged at
@@ -285,9 +291,14 @@ remain read-only.
 
 `/metrics` and `/usage` sit behind the same auth as the API (only health checks
 are public), so a scraper in `auth.mode: required` needs a key. `metrics.enabled:
-false` turns both into 404s while counters keep running in memory. Costs come
-from a small manual table; an unknown model is reported as `cost_known: false`,
-not as a misleading zero.
+false` turns both into 404s while counters keep running in memory. Costs use the
+provider's own published catalog when one exists (OpenCode Go, Command Code and
+their System One surfaces); custom providers fall back to the small manual
+table. Cache reads are charged at the input rate because the usage entry does not
+separate them, and a built-in provider's unknown model stays `cost_known: false`
+instead of borrowing another vendor's price. Streaming entries are committed
+after the relay, so a trailing usage chunk contributes real prompt/completion
+tokens; a provider that never sends one records zero rather than an estimate.
 
 ### Client integration
 
@@ -595,6 +606,12 @@ The model cell shows small capability icons underneath the name: a wrench for
 tool calls, an eye for vision, and a lightbulb for reasoning. Hints come from the
 catalog (OpenCode's `/models` flags and Command Code's model documentation) and
 from `models[].capabilities` in config; models without hints show no icons.
+
+The table headers are sortable: model, `i/o/c` (input rate), requests, TTFT,
+latency, TPS, and last seen. Clicking a header toggles ascending/descending; the
+choice is stored in `localStorage['lgllm.perf.sort']`. Rows without a value for
+the selected metric always stay at the bottom, so a model with no TPS sample
+does not jump to the top of a descending sort.
 
 The ring is the fast read path. Set `metrics.performance_db` to a bbolt file to
 also persist samples: writes go through a bounded background queue, the latest

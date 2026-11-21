@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"lgllm/internal/metrics"
+	"lgllm/internal/perf"
 	"lgllm/internal/pricing"
 	"lgllm/internal/usagelog"
 )
@@ -77,7 +78,7 @@ func (s *Server) recordRequest(req *generationRequest, provider, model string, s
 		s.RateLimit.AddTokens(req.clientKey, promptTokens+completionTokens)
 	}
 
-	cost, known := pricing.Estimate(model, promptTokens, completionTokens)
+	cost, known := pricing.EstimateFor(provider, model, promptTokens, completionTokens)
 	s.Usage.Add(usagelog.Entry{
 		Time:             req.start,
 		RequestID:        req.requestID,
@@ -87,6 +88,7 @@ func (s *Server) recordRequest(req *generationRequest, provider, model string, s
 		Model:            model,
 		Status:           status,
 		Stream:           req.stream,
+		ClientKey:        req.clientKey,
 		DurationMS:       elapsed.Milliseconds(),
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
@@ -95,6 +97,22 @@ func (s *Server) recordRequest(req *generationRequest, provider, model string, s
 		CostKnown:        known,
 		Error:            errText,
 	})
+}
+
+// recordStreamRequest commits the usage entry after the stream finished. The
+// tap sees the provider's trailing usage chunk when it sends one, so streamed
+// prompt/completion tokens and cost match the non-stream path instead of
+// staying zero. A provider that never reports usage keeps zero tokens rather
+// than an invented count.
+func (s *Server) recordStreamRequest(req *generationRequest, provider, model string, tap *perf.SSETap) {
+	var promptTokens, completionTokens int
+	if tap != nil {
+		if stats := tap.Stats(); stats.TokensKnown {
+			promptTokens = stats.PromptTokens
+			completionTokens = stats.CompletionTokens
+		}
+	}
+	s.recordRequest(req, provider, model, http.StatusOK, promptTokens, completionTokens, "")
 }
 
 var (

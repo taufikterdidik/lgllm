@@ -1,11 +1,31 @@
 'use strict';
 
+// Columns that can drive the performance table sort. Numeric metrics default to
+// descending (biggest first); names and prices start ascending.
+const PERF_SORT_DEFAULT_DIR = {
+  model: 'asc',
+  pricing: 'asc',
+  requests: 'desc',
+  ttft: 'desc',
+  latency: 'desc',
+  tps: 'desc',
+  last_seen: 'desc',
+};
+
+function parsePerfSort(raw) {
+  const [key, dir] = String(raw || '').split(':');
+  if (!(key in PERF_SORT_DEFAULT_DIR)) return { key: 'tps', dir: 'desc' };
+  const fallback = PERF_SORT_DEFAULT_DIR[key];
+  return { key, dir: dir === 'asc' || dir === 'desc' ? dir : fallback };
+}
+
 const state = {
   token: localStorage.getItem('lgllm.admin.token') || '',
   tab: 'providers',
   logsAbort: null,
   perfTimer: null,
   perfScale: localStorage.getItem('lgllm.perf.scale') === 'log' ? 'log' : 'linear',
+  perfSort: parsePerfSort(localStorage.getItem('lgllm.perf.sort')),
   usageGroup: 'provider',
 };
 
@@ -936,10 +956,16 @@ async function renderKeys() {
 }
 
 async function renderUsage() {
+  const groups = [
+    { value: 'provider', label: 'provider' },
+    { value: 'model', label: 'model' },
+    { value: 'client', label: 'client key' },
+    { value: 'day', label: 'day' },
+  ];
   const selector = el('select');
-  for (const g of ['provider', 'model', 'day']) {
-    const opt = el('option', { value: g, text: g });
-    if (g === state.usageGroup) opt.selected = true;
+  for (const g of groups) {
+    const opt = el('option', { value: g.value, text: g.label });
+    if (g.value === state.usageGroup) opt.selected = true;
     selector.appendChild(opt);
   }
   selector.addEventListener('change', () => { state.usageGroup = selector.value; renderUsage(); });
@@ -952,7 +978,7 @@ async function renderUsage() {
     String(b.prompt_tokens),
     String(b.completion_tokens),
     String(b.saved_bytes),
-    b.cost_known ? '$' + b.cost_usd.toFixed(6) : 'n/a',
+    usageCostCell(b),
   ]);
 
   view.replaceChildren(
@@ -961,6 +987,27 @@ async function renderUsage() {
       el('span', { class: 'muted', text: 'Ring buffer only; lost on restart.' })]),
     table(['key', 'requests', 'failures', 'prompt', 'completion', 'saved bytes', 'cost'], rows),
   );
+}
+
+// usageCostCell shows a complete total when every request has a published
+// price, a lower bound when only some do, and n/a when none do. A streaming
+// request without a usage chunk contributes no tokens, so its cost is zero
+// even though the model is priced.
+function usageCostCell(b) {
+  const complete = b.cost_known;
+  const priced = b.requests - (b.unpriced_requests || 0);
+  const title = b.unpriced_requests
+    ? b.unpriced_requests + ' request(s) have no published price'
+    : '';
+  if (complete) return el('span', { text: '$' + b.cost_usd.toFixed(6) });
+  if (priced > 0) {
+    return el('span', {
+      class: 'muted',
+      text: '≥$' + b.cost_usd.toFixed(6),
+      title,
+    });
+  }
+  return el('span', { class: 'muted', text: 'n/a', title });
 }
 
 function fmtContext(tokens) {
@@ -1041,7 +1088,9 @@ function perfModelCell(key, caps) {
 function percentileOrAvg(mode, metric) {
   if (!mode) return undefined;
   const p50 = mode['p50_' + metric];
-  return p50 === null || p50 === undefined ? mode['avg_' + metric] : p50;
+  if (p50 !== null && p50 !== undefined) return p50;
+  const avg = mode['avg_' + metric];
+  return avg === null ? undefined : avg;
 }
 
 function fmtTps(mode) {
@@ -1293,6 +1342,27 @@ function connectionTable(m) {
   );
 }
 
+// comparePerfRows orders by the selected metric. Missing values always sink to
+// the bottom, whatever the direction, so a model without TPS does not jump to
+// the top of a descending sort.
+function comparePerfRows(a, b) {
+  const sort = state.perfSort;
+  const av = a.sort[sort.key];
+  const bv = b.sort[sort.key];
+  const missing = (v) => v === null || v === undefined ||
+    (typeof v === 'number' && !isFinite(v));
+  const an = missing(av), bn = missing(bv);
+  const byName = () => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  if (an && bn) return byName();
+  if (an) return 1;
+  if (bn) return -1;
+  const cmp = typeof av === 'string' || typeof bv === 'string'
+    ? String(av).localeCompare(String(bv))
+    : av - bv;
+  if (cmp === 0) return byName();
+  return sort.dir === 'asc' ? cmp : -cmp;
+}
+
 // renderPerformance shows the last N attempts per advertised model. Stream and
 // non-stream samples are averaged separately; the row prefers the stream values
 // and labels a non-stream TPS as estimated (it is tokens/latency, not TPS).
@@ -1304,10 +1374,20 @@ async function renderPerformance() {
   let payload = null;
   let rows = [];
 
+  function toggleSort(key) {
+    if (state.perfSort.key === key) {
+      state.perfSort.dir = state.perfSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.perfSort = { key, dir: PERF_SORT_DEFAULT_DIR[key] || 'desc' };
+    }
+    localStorage.setItem('lgllm.perf.sort', state.perfSort.key + ':' + state.perfSort.dir);
+    draw();
+  }
+
   function draw() {
     const tbody = el('tbody');
-    for (const row of rows) {
-      const key = row.provider + '/' + row.model;
+    for (const row of rows.slice().sort(comparePerfRows)) {
+      const key = row.key;
       const open = expanded.has(key);
       const caret = el('span', { class: 'caret', text: open ? '▾' : '▸' });
       const tr = el('tr', { class: 'perf-row' });
@@ -1340,18 +1420,46 @@ async function renderPerformance() {
       }
     }
 
-    const headers = ['model', 'i/o/c', 'requests', 'ok', 'TTFT p50', 'latency p50', 'TPS p50',
-      'TPS trend', 'mode', 'last seen'];
-    const head = el('thead', {}, [el('tr', {}, headers.map((h) => {
-      const th = el('th', { text: h });
-      if (h === 'i/o/c') {
-        th.title = 'USD per 1M tokens: input / output / cache read (base rate)';
+    const columns = [
+      { label: 'model', sort: 'model', title: 'Sort by model name' },
+      {
+        label: 'i/o/c', sort: 'pricing',
+        title: 'Sort by input price · USD per 1M tokens: input / output / cache read (base rate)',
+      },
+      { label: 'requests', sort: 'requests', title: 'Sort by request count' },
+      { label: 'ok' },
+      { label: 'TTFT p50', sort: 'ttft', title: 'Sort by p50 time to first token' },
+      { label: 'latency p50', sort: 'latency', title: 'Sort by p50 total latency' },
+      { label: 'TPS p50', sort: 'tps', title: 'Sort by p50 tokens per second' },
+      { label: 'TPS trend' },
+      { label: 'mode' },
+      { label: 'last seen', sort: 'last_seen', title: 'Sort by most recent request' },
+    ];
+    const head = el('thead', {}, [el('tr', {}, columns.map((col) => {
+      const th = el('th', { text: col.label });
+      if (col.title) th.title = col.title;
+      if (col.sort) {
+        th.className = 'sortable';
+        if (state.perfSort.key === col.sort) {
+          th.setAttribute('aria-sort',
+            state.perfSort.dir === 'asc' ? 'ascending' : 'descending');
+          th.appendChild(el('span', {
+            class: 'sort-mark',
+            text: state.perfSort.dir === 'asc' ? ' ▲' : ' ▼',
+          }));
+        }
+        th.addEventListener('click', () => toggleSort(col.sort));
       }
       return th;
     }))]);
     host.replaceChildren(el('table', {}, [head, tbody]));
     if (payload && payload.data.every((m) => m.attempts === 0)) {
       host.appendChild(el('p', { class: 'muted', text: 'No samples yet — send a request to a model.' }));
+    }
+    if (payload) {
+      meta.textContent = 'window: last ' + payload.window + ' attempts · low sample < ' +
+        payload.low_sample_at + ' · sorted by ' + state.perfSort.key + ' ' +
+        state.perfSort.dir + ' · updated ' + new Date().toLocaleTimeString();
     }
   }
 
@@ -1360,20 +1468,33 @@ async function renderPerformance() {
       payload = await api('/api/performance?series=1');
       rows = payload.data.map((m) => {
         const mode = pickPerfMode(m);
+        const key = m.provider + '/' + m.model;
+        const ttft = percentileOrAvg(mode, 'ttft_ms');
+        const latency = percentileOrAvg(mode, 'latency_ms');
+        const tps = percentileOrAvg(mode, 'tps');
         return {
+          key,
           provider: m.provider,
           model: m.model,
           source: m,
           series: m.series || [],
-          modelNode: perfModelCell(m.provider + '/' + m.model, m.capabilities),
-          tps: percentileOrAvg(mode, 'tps') === undefined ? -1 : percentileOrAvg(mode, 'tps'),
+          modelNode: perfModelCell(key, m.capabilities),
+          sort: {
+            model: key.toLowerCase(),
+            pricing: m.pricing && m.pricing.known ? m.pricing.input : null,
+            requests: m.attempts,
+            ttft: ttft === undefined ? null : ttft,
+            latency: latency === undefined ? null : latency,
+            tps: tps === undefined ? null : tps,
+            last_seen: m.last_seen ? Date.parse(m.last_seen) : null,
+          },
           cells: [
-            m.provider + '/' + m.model,
+            key,
             ratesCell(m.pricing),
             String(m.attempts),
             String(m.successes),
-            fmtMs(percentileOrAvg(mode, 'ttft_ms')),
-            fmtMs(percentileOrAvg(mode, 'latency_ms')),
+            fmtMs(ttft),
+            fmtMs(latency),
             tpsCell(mode),
             sparkline(m.series || [], 'tps'),
             perfModes(m),
@@ -1381,12 +1502,7 @@ async function renderPerformance() {
           ],
         };
       });
-      rows.sort((a, b) => b.tps - a.tps ||
-        (a.provider + '/' + a.model < b.provider + '/' + b.model ? -1
-          : a.provider + '/' + a.model > b.provider + '/' + b.model ? 1 : 0));
       draw();
-      meta.textContent = 'window: last ' + payload.window + ' attempts · low sample < ' +
-        payload.low_sample_at + ' · updated ' + new Date().toLocaleTimeString();
     } catch (err) {
       host.replaceChildren(el('p', { class: 'error', text: err.message }));
       setStatus(err.message, 'error');

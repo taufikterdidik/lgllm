@@ -1,6 +1,7 @@
 package pricing
 
 import (
+	"math"
 	"testing"
 
 	"lgllm/internal/registry"
@@ -52,6 +53,28 @@ func TestModelRateForFreeAndUnknown(t *testing.T) {
 	}
 	if _, ok := ModelRateFor("custom-provider", "gpt-4o"); ok {
 		t.Error("unknown provider reported a rate")
+	}
+}
+
+func TestEstimateForPrefersProviderCatalog(t *testing.T) {
+	// qwen4-max: 1.5 input / 4.5 output per 1M tokens.
+	cost, known := EstimateFor("opencode-go", "qwen4-max", 1_000_000, 1_000_000)
+	if !known || math.Abs(cost-6) > 1e-9 {
+		t.Errorf("opencode-go cost = %v, known = %v", cost, known)
+	}
+	cost, known = EstimateFor("cmdc", "claude-sonnet-5-5", 1_000_000, 1_000_000)
+	if !known || math.Abs(cost-12) > 1e-9 {
+		t.Errorf("commandcode cost = %v, known = %v", cost, known)
+	}
+	// A built-in provider with an unknown model must not borrow the generic
+	// OpenAI table: its real price is unpublished, not gpt-4o-mini's.
+	if _, ok := EstimateFor("opencode-go", "gpt-4o-mini", 1000, 1000); ok {
+		t.Error("a built-in provider fell back to the generic table")
+	}
+	// Custom providers keep the old model-only fallback.
+	cost, known = EstimateFor("my-gateway", "gpt-4o-mini", 1_000_000, 1_000_000)
+	if !known || math.Abs(cost-0.75) > 1e-9 {
+		t.Errorf("custom provider cost = %v, known = %v", cost, known)
 	}
 }
 

@@ -1994,6 +1994,60 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 34. Sorting Performance + group usage per client key + biaya provider-aware — ✅ SELESAI
+
+> Status: tabel Performance bisa diurutkan dinamis, usage bisa di-group per
+> client key, dan estimasi biaya memakai katalog harga provider sehingga tidak
+> lagi `n/a` untuk model bawaan.
+
+### 34a. Keputusan implementasi — ✅ SELESAI
+
+- **Sorting Performance.** Header `model`, `i/o/c`, `requests`, `TTFT p50`,
+  `latency p50`, `TPS p50`, dan `last seen` bisa diklik. Klik pertama memakai
+  arah default (numerik menurun, nama/harga menaik), klik berikutnya membalik
+  arah. Pilihan disimpan di `localStorage['lgllm.perf.sort']`.
+- **Nilai kosong.** Model tanpa sampel selalu diletakkan di bawah, apa pun arah
+  sortirnya, supaya model tanpa TPS tidak naik ke atas saat sortir menurun.
+- **Kolom `i/o/c`.** Sortir memakai harga input (USD per 1M token). Tooltip
+  header menjelaskan hal ini; harga output/cache tetap ditampilkan di sel.
+- **Group client key.** `GET /api/usage?group=client` mengelompokkan berdasarkan
+  identitas anonim yang sudah dipakai rate limit (`key:<hash>` atau `local`).
+  Nama dari key buatan admin ditampilkan bila ada; key dari `auth.keys` tetap
+  `key:<hash>` karena tidak punya label.
+- **Field baru usage.** Bucket berisi `client_key` (identitas) dan
+  `unpriced_requests` (jumlah entri tanpa harga). UI menampilkan `n/a` hanya bila
+  tidak ada satu pun entri yang punya harga; bila sebagian known, tampil
+  `≥$...` dengan tooltip jumlah entri tanpa harga.
+- **Biaya provider-aware.** `pricing.EstimateFor` memakai katalog provider lebih
+  dulu (OpenCode Go, Command Code, dan surface System One). Provider bawaan yang
+  modelnya tidak ada di katalog melaporkan `cost_known: false` daripada menebak
+  dengan tabel generik milik vendor lain. Provider custom tetap memakai tabel
+  generik lama.
+- **Token stream.** Usage dicatat setelah stream selesai memakai statistik
+  `SSETap`, jadi chunk `usage` di akhir stream ikut terhitung. Sebelumnya entry
+  stream selalu 0 token karena dicatat sebelum relay.
+- **Verifikasi.** Test harga provider, test API group client (termasuk nama key
+  admin), test UI statis, `go test -race ./...`, dan smoke Playwright untuk klik
+  header tabel.
+
+### 34b. Belum masuk fase 34
+
+- **Multi-kolom sort.** Hanya satu kolom aktif; belum ada shift-klik atau
+  tie-breaker yang bisa dipilih.
+- **Sortir `i/o/c`.** Hanya berdasarkan harga input, belum bisa memilih output
+  atau cache read dari header.
+- **Cache token.** Usage belum memisahkan prompt token yang cache hit, jadi
+  seluruh prompt dihitung dengan harga input.
+- **Token stream tanpa usage.** Provider yang tidak mengirim chunk `usage`
+  pada stream tetap tercatat 0 token; biayanya terlihat nol walau modelnya
+  berbayar.
+- **Nama key config.** `auth.keys` hanya berisi string, jadi grouping menampilkan
+  hash; memberi nama harus lewat key admin.
+- **Sortir server-side.** Seluruh baris tetap dikirim ke browser lalu diurutkan
+  di sana; belum ada parameter `sort=` di API.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -2031,6 +2085,7 @@ jujur tanpa menambah lapisan routing baru.
 | 31 | Kolom harga i/o/c di Performance | 1 hari | ✅ rate per 1M token dari katalog |
 | 32 | Routing System One (Jev) | 1 hari | ✅ `/v1/systemone` + `cmds`/`ocs` |
 | 33 | Ikon kapabilitas di Performance | 0,5 hari | ✅ tools/vision/reasoning |
+| 34 | Sortir Performance, usage per client key, biaya provider-aware | 1 hari | ✅ klik header + `group=client` + harga katalog |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

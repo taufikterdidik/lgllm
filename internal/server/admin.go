@@ -690,17 +690,19 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	group := r.URL.Query().Get("group")
 	switch group {
-	case "", "provider", "model", "day":
+	case "", "provider", "model", "client", "day":
 	default:
-		writeJSONError(w, http.StatusBadRequest, "group must be provider|model|day", "invalid_request_error")
+		writeJSONError(w, http.StatusBadRequest, "group must be provider|model|client|day", "invalid_request_error")
 		return
 	}
 	if group == "" {
 		group = "provider"
 	}
+	labels := s.clientKeyLabels()
 
 	type bucket struct {
 		Key              string  `json:"key"`
+		ClientKey        string  `json:"client_key,omitempty"`
 		Requests         int     `json:"requests"`
 		Failures         int     `json:"failures"`
 		PromptTokens     int     `json:"prompt_tokens"`
@@ -708,6 +710,9 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		SavedBytes       int     `json:"saved_bytes"`
 		CostUSD          float64 `json:"cost_usd"`
 		CostKnown        bool    `json:"cost_known"`
+		// UnpricedRequests counts entries with no published price. The bucket
+		// total is then a lower bound rather than a complete number.
+		UnpricedRequests int `json:"unpriced_requests"`
 	}
 	agg := make(map[string]*bucket)
 	for _, e := range s.Usage.Snapshot(0) {
@@ -717,21 +722,32 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		if !to.IsZero() && !e.Time.Before(to) {
 			continue
 		}
-		key := "(unknown)"
+		groupKey := "(unknown)"
+		label := groupKey
 		switch group {
 		case "provider":
 			if e.Provider != "" {
-				key = e.Provider
+				groupKey, label = e.Provider, e.Provider
 			}
 		case "model":
-			key = strings.TrimPrefix(e.Provider+"/"+e.Model, "/")
+			groupKey = strings.TrimPrefix(e.Provider+"/"+e.Model, "/")
+			label = groupKey
+		case "client":
+			if key := strings.TrimSpace(e.ClientKey); key != "" {
+				groupKey = key
+			}
+			label = clientKeyLabel(groupKey, labels)
 		case "day":
-			key = e.Time.UTC().Format("2006-01-02")
+			groupKey = e.Time.UTC().Format("2006-01-02")
+			label = groupKey
 		}
-		b := agg[key]
+		b := agg[groupKey]
 		if b == nil {
-			b = &bucket{Key: key, CostKnown: true}
-			agg[key] = b
+			b = &bucket{Key: label, CostKnown: true}
+			if group == "client" {
+				b.ClientKey = groupKey
+			}
+			agg[groupKey] = b
 		}
 		b.Requests++
 		b.PromptTokens += e.PromptTokens
@@ -743,6 +759,7 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		}
 		if !e.CostKnown {
 			b.CostKnown = false
+			b.UnpricedRequests++
 		}
 	}
 
@@ -750,12 +767,44 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	for _, b := range agg {
 		out = append(out, *b)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Key != out[j].Key {
+			return out[i].Key < out[j].Key
+		}
+		return out[i].ClientKey < out[j].ClientKey
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"object": "list",
 		"group":  group,
 		"data":   out,
 	})
+}
+
+// clientKeyLabels resolves the anonymized identity used by clientIdentity to an
+// admin-provided key name. Config-file keys have no human label, so they keep the
+// already-hashed "key:<id>" form.
+func (s *Server) clientKeyLabels() map[string]string {
+	labels := make(map[string]string)
+	if s.Admin == nil {
+		return labels
+	}
+	for _, k := range s.Admin.State().Keys {
+		if k.Name != "" {
+			labels[admin.KeyID(k.Key)] = k.Name
+		}
+	}
+	return labels
+}
+
+func clientKeyLabel(identity string, labels map[string]string) string {
+	id, ok := strings.CutPrefix(identity, "key:")
+	if !ok {
+		return identity // "local" or "(unknown)"
+	}
+	if name := labels[id]; name != "" {
+		return name
+	}
+	return identity
 }
 
 func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {

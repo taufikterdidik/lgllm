@@ -10,21 +10,24 @@ import (
 
 // Entry is one finished request.
 type Entry struct {
-	Time             time.Time `json:"time"`
-	RequestID        string    `json:"request_id,omitempty"`
-	Ingress          string    `json:"ingress"`
-	Requested        string    `json:"requested"`
-	Provider         string    `json:"provider,omitempty"`
-	Model            string    `json:"model,omitempty"`
-	Status           int       `json:"status"`
-	Stream           bool      `json:"stream"`
-	DurationMS       int64     `json:"duration_ms"`
-	PromptTokens     int       `json:"prompt_tokens"`
-	CompletionTokens int       `json:"completion_tokens"`
-	SavedBytes       int       `json:"saved_bytes"`
-	CostUSD          float64   `json:"cost_usd"`
-	CostKnown        bool      `json:"cost_known"`
-	Error            string    `json:"error,omitempty"`
+	Time      time.Time `json:"time"`
+	RequestID string    `json:"request_id,omitempty"`
+	Ingress   string    `json:"ingress"`
+	Requested string    `json:"requested"`
+	Provider  string    `json:"provider,omitempty"`
+	Model     string    `json:"model,omitempty"`
+	Status    int       `json:"status"`
+	Stream    bool      `json:"stream"`
+	// ClientKey is the anonymized bucket from clientIdentity ("local" or
+	// "key:<8-byte hash>"). The raw credential is never stored.
+	ClientKey        string  `json:"client_key,omitempty"`
+	DurationMS       int64   `json:"duration_ms"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	SavedBytes       int     `json:"saved_bytes"`
+	CostUSD          float64 `json:"cost_usd"`
+	CostKnown        bool    `json:"cost_known"`
+	Error            string  `json:"error,omitempty"`
 }
 
 // Store is a fixed-size ring buffer, safe for concurrent use. A nil Store is

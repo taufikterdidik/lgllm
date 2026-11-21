@@ -100,6 +100,7 @@ func TestChatCompletionsStreams(t *testing.T) {
 	events := []string{
 		"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
 		"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n",
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}\n\n",
 		"data: [DONE]\n\n",
 	}
 	_, cfg := mockUpstream(t, func(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +133,30 @@ func TestChatCompletionsStreams(t *testing.T) {
 	}
 	if got, want := rec.Body.String(), strings.Join(events, ""); got != want {
 		t.Errorf("stream = %q, want %q", got, want)
+	}
+
+	// The trailing usage chunk is read by the tap, so the ring entry has real
+	// token counts instead of the zero it used to record before the relay.
+	usageRes := do(s, httptest.NewRequest(http.MethodGet, "/usage?limit=1", nil))
+	if usageRes.Code != http.StatusOK {
+		t.Fatalf("usage status = %d, body = %s", usageRes.Code, usageRes.Body)
+	}
+	var usage struct {
+		Entries []struct {
+			Stream           bool `json:"stream"`
+			PromptTokens     int  `json:"prompt_tokens"`
+			CompletionTokens int  `json:"completion_tokens"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(usageRes.Body.Bytes(), &usage); err != nil {
+		t.Fatalf("usage body = %s: %v", usageRes.Body, err)
+	}
+	if len(usage.Entries) != 1 {
+		t.Fatalf("usage entries = %+v", usage.Entries)
+	}
+	entry := usage.Entries[0]
+	if !entry.Stream || entry.PromptTokens != 11 || entry.CompletionTokens != 7 {
+		t.Errorf("stream usage = %+v", entry)
 	}
 }
 
