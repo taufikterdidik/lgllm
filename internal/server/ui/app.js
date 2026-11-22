@@ -857,6 +857,40 @@ async function renderConnections() {
   );
 }
 
+// comboMembersCell renders the configured members and annotates them with
+// runtime state from /api/combos. The last member that served a request is
+// highlighted; any member with a recorded failure gets a dotted underline and a
+// tooltip explaining the last error, which is most useful on the first member
+// that was skipped during fallback.
+function comboMembersCell(c) {
+  const members = c.members || [];
+  const wrap = el('span', { class: 'combo-members' });
+  members.forEach((member, index) => {
+    if (index) wrap.appendChild(document.createTextNode(' → '));
+    const classes = ['combo-member'];
+    const tips = [];
+    if (c.last_member && c.last_member === member) {
+      classes.push('active');
+      tips.push('Last used' + (c.last_used
+        ? ' at ' + new Date(c.last_used).toLocaleString() : ''));
+    }
+    const err = c.member_errors && c.member_errors[member];
+    if (err) {
+      classes.push('has-error');
+      const parts = [];
+      if (err.message) parts.push(err.message);
+      if (err.status) parts.push('HTTP ' + err.status);
+      if (err.connection) parts.push('conn ' + err.connection);
+      if (err.at) parts.push('at ' + new Date(err.at).toLocaleString());
+      tips.push('Last error: ' + parts.join(' · '));
+    }
+    const node = el('span', { class: classes.join(' '), text: member });
+    if (tips.length) node.title = tips.join('\n');
+    wrap.appendChild(node);
+  });
+  return wrap;
+}
+
 async function renderCombos() {
   const [payload, providers] = await Promise.all([
     api('/api/combos'),
@@ -885,7 +919,7 @@ async function renderCombos() {
     const context = c.context_known ? fmtContext(c.context_length) : 'unknown';
     return [
       c.name,
-      (c.members || []).join(' → '),
+      comboMembersCell(c),
       c.strategy || 'priority',
       context,
       saver,

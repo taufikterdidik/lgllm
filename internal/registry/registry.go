@@ -1211,6 +1211,10 @@ func (r *Registry) Lookup(requested string) (Target, error) {
 type Attempt struct {
 	Provider *Provider
 	Model    string
+	// Member is the combo member reference exactly as configured. It is empty
+	// for a direct provider/model request. The admin UI uses it to match the
+	// runtime last-used/error state back to the displayed member string.
+	Member string
 }
 
 // Plan is the ordered list of attempts for one request. A plain model has one
@@ -1311,7 +1315,7 @@ func (r *Registry) planCombo(cb *Combo) (Plan, error) {
 			lastErr = err
 			continue
 		}
-		usable = append(usable, Attempt{Provider: t.Provider, Model: t.Model})
+		usable = append(usable, Attempt{Provider: t.Provider, Model: t.Model, Member: member})
 	}
 	if len(usable) == 0 {
 		if lastErr == nil {

@@ -47,6 +47,10 @@ type generationRequest struct {
 	requestID string
 	// clientKey is the rate-limit bucket this request was charged to.
 	clientKey string
+	// combo and comboMember identify the combo and the member currently being
+	// attempted, so a successful response can update the Combo tab state.
+	combo       string
+	comboMember string
 }
 
 // attemptFailure is one failed (provider, connection) pair, reported to the
@@ -75,11 +79,13 @@ type attemptOutcome struct {
 func (s *Server) runPlan(w http.ResponseWriter, r *http.Request, req *generationRequest, plan registry.Plan) {
 	log := LoggerFrom(r.Context())
 	failures := make([]attemptFailure, 0, len(plan.Attempts))
+	req.combo = plan.Combo
 
 	for i, attempt := range plan.Attempts {
 		if r.Context().Err() != nil {
 			return // client hung up; there is nobody to answer
 		}
+		req.comboMember = attempt.Member
 		if !translatable(attempt.Provider.Format) {
 			s.Metrics.ObserveFailure(attempt.Provider.ID, http.StatusNotImplemented)
 			message := fmt.Sprintf("format %q has no translator", attempt.Provider.Format)
@@ -92,9 +98,11 @@ func (s *Server) runPlan(w http.ResponseWriter, r *http.Request, req *generation
 				Status:   http.StatusNotImplemented,
 				Error:    message,
 			})
+			s.recordComboFailure(plan.Combo, attempt.Member, failures[len(failures)-1:])
 			continue
 		}
 
+		before := len(failures)
 		out := s.tryProvider(w, r, req, attempt, i < len(plan.Attempts)-1, &failures)
 		if out.done {
 			return
@@ -103,6 +111,7 @@ func (s *Server) runPlan(w http.ResponseWriter, r *http.Request, req *generation
 			s.badRequest(w, r, req.in, out.fatal)
 			return
 		}
+		s.recordComboFailure(plan.Combo, attempt.Member, failures[before:])
 	}
 
 	s.writeFailures(w, req, plan, failures)

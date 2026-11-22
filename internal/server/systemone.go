@@ -100,11 +100,14 @@ func (s *Server) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runSystemOnePlan(w http.ResponseWriter, r *http.Request, req *generationRequest, plan registry.Plan) {
 	log := LoggerFrom(r.Context())
 	failures := make([]attemptFailure, 0, len(plan.Attempts))
+	req.combo = plan.Combo
 
 	for i, attempt := range plan.Attempts {
 		if r.Context().Err() != nil {
 			return
 		}
+		req.comboMember = attempt.Member
+		before := len(failures)
 		out := s.trySystemOneProvider(w, r, req, attempt, i < len(plan.Attempts)-1, &failures)
 		if out.done {
 			return
@@ -113,6 +116,7 @@ func (s *Server) runSystemOnePlan(w http.ResponseWriter, r *http.Request, req *g
 			s.badRequest(w, r, ingressSystemOne, out.fatal)
 			return
 		}
+		s.recordComboFailure(plan.Combo, attempt.Member, failures[before:])
 	}
 
 	s.writeFailures(w, req, plan, failures)

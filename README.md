@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–34 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–35 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -279,6 +279,14 @@ the model list. Keys has a **Generate key** action that creates a random
 it to the clipboard; only the name and hash prefix are listed afterwards, and
 admin keys can be renamed without changing the secret. Config-managed entries
 remain read-only.
+
+On the **Combos** tab the member that most recently served a request is
+highlighted in green. A member with a recorded failure gets a dotted red
+underline and a tooltip with the last error message, HTTP status, connection and
+time; this is how the first member of a fallback shows why it was skipped. A
+successful request clears that member's error. The state is runtime-only:
+`GET /api/combos` exposes `last_member`, `last_used` and `member_errors` in
+memory, and a restart starts with no history.
 
 ### Observability
 

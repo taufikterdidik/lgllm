@@ -454,6 +454,63 @@ func TestAdminUsageGroupsByClientKey(t *testing.T) {
 	}
 }
 
+func TestAdminCombosExposeLastMemberAndError(t *testing.T) {
+	s, _, _ := newAdminTestServerWith(t, false, func(c *config.Config) {
+		c.Combos = []config.Combo{{
+			Name:    "combo",
+			Members: []string{"testprov/bad-model", "testprov/good-model"},
+		}}
+	}, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Model == "bad-model" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"message":"boom"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	})
+
+	chat := do(s, httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"combo","messages":[{"role":"user","content":"hi"}]}`)))
+	if chat.Code != http.StatusOK {
+		t.Fatalf("chat status = %d, body = %s", chat.Code, chat.Body)
+	}
+
+	res := do(s, adminRequest(http.MethodGet, "/api/combos", adminTestToken, ""))
+	if res.Code != http.StatusOK {
+		t.Fatalf("combos status = %d, body = %s", res.Code, res.Body)
+	}
+	var payload struct {
+		Data []struct {
+			Name         string `json:"name"`
+			LastMember   string `json:"last_member"`
+			MemberErrors map[string]struct {
+				Message string `json:"message"`
+				Status  int    `json:"status"`
+			} `json:"member_errors"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("body = %s: %v", res.Body, err)
+	}
+	if len(payload.Data) != 1 {
+		t.Fatalf("combos = %+v", payload.Data)
+	}
+	combo := payload.Data[0]
+	if combo.LastMember != "testprov/good-model" {
+		t.Errorf("last_member = %q", combo.LastMember)
+	}
+	err := combo.MemberErrors["testprov/bad-model"]
+	if err.Message != "boom" || err.Status != http.StatusInternalServerError {
+		t.Errorf("member error = %+v", err)
+	}
+}
+
 func TestAdminTestConnectionSendsSessionHeader(t *testing.T) {
 	var got string
 	s, _, _ := newAdminTestServerWith(t, false, func(c *config.Config) {

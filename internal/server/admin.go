@@ -150,6 +150,11 @@ type adminCombo struct {
 	ContextLength int      `json:"context_length,omitempty"`
 	ContextKnown  bool     `json:"context_known"`
 	Managed       string   `json:"managed"`
+	// Runtime state for the Combo tab. LastMember is the member string exactly
+	// as configured; MemberErrors maps the same strings to their last failure.
+	LastMember   string                      `json:"last_member,omitempty"`
+	LastUsed     *time.Time                  `json:"last_used,omitempty"`
+	MemberErrors map[string]comboMemberError `json:"member_errors,omitempty"`
 }
 
 type adminKey struct {
@@ -235,6 +240,23 @@ func comboDTO(c config.Combo, managed string) adminCombo {
 	return adminCombo{
 		Name: c.Name, Members: c.Members, Strategy: c.Strategy,
 		TokenSaver: c.TokenSaver, Managed: managed,
+	}
+}
+
+// fillComboStatus attaches runtime state to a combo DTO. It is only used by the
+// list endpoint; create/update responses do not need it.
+func (s *Server) fillComboStatus(dto *adminCombo) {
+	if s.comboStatus == nil {
+		return
+	}
+	last, used, errs := s.comboStatus.Snapshot(dto.Name)
+	dto.LastMember = last
+	if !used.IsZero() {
+		utc := used.UTC()
+		dto.LastUsed = &utc
+	}
+	if len(errs) > 0 {
+		dto.MemberErrors = errs
 	}
 }
 
@@ -510,6 +532,7 @@ func (s *Server) handleAdminCombos(w http.ResponseWriter, r *http.Request) {
 				dto.ContextLength = info.Context
 				dto.ContextKnown = info.Known
 			}
+			s.fillComboStatus(&dto)
 			out = append(out, dto)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": out})

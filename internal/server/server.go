@@ -53,6 +53,9 @@ type Server struct {
 	ConnLimit *connlimit.Limiter
 	// Admin owns the overlay for API-managed resources (nil disables the API).
 	Admin *admin.Manager
+	// comboStatus is runtime-only state for the Combo tab: last serving member
+	// and the last error attributed to each member.
+	comboStatus *comboStatusStore
 
 	mux *http.ServeMux
 	srv *http.Server
@@ -132,20 +135,21 @@ func New(opts Options) *Server {
 		})
 	}
 	s := &Server{
-		Config:    opts.Config,
-		Log:       opts.Log,
-		Auth:      opts.Auth,
-		Registry:  opts.Registry,
-		Upstream:  opts.Upstream,
-		Balancer:  opts.Balancer,
-		Metrics:   opts.Metrics,
-		Usage:     opts.Usage,
-		Perf:      opts.Perf,
-		RateLimit: opts.RateLimit,
-		ConnLimit: opts.ConnLimit,
-		Admin:     opts.Admin,
-		mux:       http.NewServeMux(),
-		started:   time.Now(),
+		Config:      opts.Config,
+		Log:         opts.Log,
+		Auth:        opts.Auth,
+		Registry:    opts.Registry,
+		Upstream:    opts.Upstream,
+		Balancer:    opts.Balancer,
+		Metrics:     opts.Metrics,
+		Usage:       opts.Usage,
+		Perf:        opts.Perf,
+		RateLimit:   opts.RateLimit,
+		ConnLimit:   opts.ConnLimit,
+		Admin:       opts.Admin,
+		mux:         http.NewServeMux(),
+		started:     time.Now(),
+		comboStatus: newComboStatusStore(),
 	}
 	s.routes()
 	return s

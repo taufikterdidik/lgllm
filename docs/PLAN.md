@@ -2048,6 +2048,51 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 35. Status runtime member combo — ✅ SELESAI
+
+> Status: tab Combos menyorot member yang terakhir melayani request dan
+> menampilkan tooltip alasan last error pada member yang gagal, termasuk member
+> pertama yang dilewati saat fallback.
+
+### 35a. Keputusan implementasi — ✅ SELESAI
+
+- **State runtime.** `comboStatusStore` menyimpan `last_member`, `last_used`, dan
+  `member_errors` per nama combo. Disimpan di `Server`, bukan di config, karena
+  ini telemetri runtime dan tidak boleh ikut ditulis ke `admin.yaml`.
+- **Identitas member.** `registry.Attempt` membawa field `Member` berisi string
+  persis seperti di `combos[].members`, sehingga alias dan bentuk
+  `provider/model` tetap bisa dicocokkan dengan UI.
+- **Sukses.** `recordRequest` menandai member yang melayani saat status < 400,
+  lalu menghapus error lama member itu. Berlaku untuk chat, Anthropic, stream,
+  dan System One.
+- **Gagal.** Setiap attempt yang gagal mencatat pesan error terakhir, status
+  HTTP, connection, dan waktu untuk member tersebut. Error yang lebih baru
+  menang bila request selesai tidak berurutan.
+- **API.** `GET /api/combos` menambahkan `last_member`, `last_used`, dan
+  `member_errors` (map member → `message`/`status`/`connection`/`at`).
+- **UI.** Member aktif diberi highlight hijau. Member yang punya error diberi
+  garis putus-putus merah dan tooltip native berisi alasan error. Tooltip
+  diterapkan ke member mana pun yang punya error; pada contoh fallback, member
+  pertama otomatis mendapatkannya.
+- **Verifikasi.** Unit test store, test API combo, test UI statis, dan smoke
+  Playwright: `good/good-model` ter-highlight, `bad/bad-model` punya tooltip
+  `upstream exploded · HTTP 500 · conn bad-conn`.
+
+### 35b. Belum masuk fase 35
+
+- **Persistensi.** Status hilang saat restart; belum disimpan ke bbolt.
+- **Riwayat error.** Hanya error terakhir per member, bukan daftar atau hitungan.
+- **Member duplikat.** Dua member dengan string sama berbagi highlight/error;
+  belum dibedakan berdasarkan index.
+- **Member tidak usable.** Member yang provider-nya tidak punya koneksi tidak
+  masuk plan, jadi tidak punya status runtime.
+- **Detail lain.** Belum ada latensi attempt, jumlah fallback, atau waktu sukses
+  terakhir per member (hanya per combo).
+- **Filter/urutkan.** Tab Combos belum bisa diurutkan berdasarkan member aktif
+  atau yang sedang error.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -2086,6 +2131,7 @@ jujur tanpa menambah lapisan routing baru.
 | 32 | Routing System One (Jev) | 1 hari | ✅ `/v1/systemone` + `cmds`/`ocs` |
 | 33 | Ikon kapabilitas di Performance | 0,5 hari | ✅ tools/vision/reasoning |
 | 34 | Sortir Performance, usage per client key, biaya provider-aware | 1 hari | ✅ klik header + `group=client` + harga katalog |
+| 35 | Status runtime member combo | 0,5 hari | ✅ highlight member aktif + tooltip last error |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

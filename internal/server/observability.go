@@ -97,6 +97,9 @@ func (s *Server) recordRequest(req *generationRequest, provider, model string, s
 		CostKnown:        known,
 		Error:            errText,
 	})
+	if status < 400 && req.combo != "" && req.comboMember != "" && s.comboStatus != nil {
+		s.comboStatus.Used(req.combo, req.comboMember, time.Now())
+	}
 }
 
 // recordStreamRequest commits the usage entry after the stream finished. The
