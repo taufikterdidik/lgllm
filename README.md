@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–35 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–36 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -299,7 +299,10 @@ memory, and a restart starts with no history.
 
 `/metrics` and `/usage` sit behind the same auth as the API (only health checks
 are public), so a scraper in `auth.mode: required` needs a key. `metrics.enabled:
-false` turns both into 404s while counters keep running in memory. Costs use the
+false` turns both into 404s while counters keep running in memory. The usage ring
+is in-memory only (`metrics.usage_log_size`, default 500) and is lost on restart;
+only performance samples can be persisted, through `metrics.performance_db`.
+Costs use the
 provider's own published catalog when one exists (OpenCode Go, Command Code and
 their System One surfaces); custom providers fall back to the small manual
 table. Cache reads are charged at the input rate because the usage entry does not
@@ -619,7 +622,9 @@ The table headers are sortable: model, `i/o/c` (input rate), requests, TTFT,
 latency, TPS, and last seen. Clicking a header toggles ascending/descending; the
 choice is stored in `localStorage['lgllm.perf.sort']`. Rows without a value for
 the selected metric always stay at the bottom, so a model with no TPS sample
-does not jump to the top of a descending sort.
+does not jump to the top of a descending sort. `last seen` shows the local date
+and time (`YYYY-MM-DD HH:MM:SS`), in both the model row and the per-connection
+breakdown.
 
 The ring is the fast read path. Set `metrics.performance_db` to a bbolt file to
 also persist samples: writes go through a bounded background queue, the latest

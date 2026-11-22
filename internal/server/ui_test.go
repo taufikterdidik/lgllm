@@ -62,6 +62,11 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 		!strings.Contains(js.Body.String(), "comparePerfRows") {
 		t.Error("app.js does not implement dynamic performance sorting")
 	}
+	if !strings.Contains(js.Body.String(), "fmtDateTime") ||
+		!strings.Contains(js.Body.String(), "fmtDateTime(c.last_seen)") ||
+		!strings.Contains(js.Body.String(), "fmtDateTime(m.last_seen)") {
+		t.Error("app.js does not render last seen with a date")
+	}
 	if !strings.Contains(js.Body.String(), "usageCostCell") ||
 		!strings.Contains(js.Body.String(), "client key") {
 		t.Error("app.js does not render usage cost and the client-key grouping")

@@ -2093,6 +2093,34 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 36. Tanggal pada Last Seen — ✅ SELESAI
+
+> Status: kolom `last seen` di tab Performance menampilkan tanggal dan waktu,
+> bukan hanya jam.
+
+### 36a. Keputusan implementasi — ✅ SELESAI
+
+- **Formatter.** `fmtDateTime` menampilkan waktu lokal dengan bentuk
+  `YYYY-MM-DD HH:MM:SS`, dipakai di baris model dan tabel per-connection.
+- **Sorting tidak berubah.** `last_seen` tetap memakai timestamp mentah, jadi
+  urutan tidak terpengaruh format tampilan.
+- **Nilai kosong.** Model yang belum pernah dipakai tetap menampilkan `—`.
+- **Verifikasi.** Test UI statis dan smoke Playwright memastikan kolom berisi
+  tanggal, bukan hanya jam.
+
+### 36b. Belum masuk fase 36
+
+- **Penyimpanan usage.** Tab Usage masih memakai ring buffer di memori
+  (`metrics.usage_log_size`, default 500) dan hilang saat restart. Hanya sample
+  performance yang disimpan ke bbolt lewat `metrics.performance_db`. Belum ada
+  ledger usage persisten, retensi, atau export.
+- **Zona waktu.** Waktu ditampilkan dalam zona waktu browser; belum ada pilihan
+  UTC atau format ISO.
+- **Riwayat last seen.** Hanya timestamp terakhir per model/connection, bukan
+  riwayat kapan saja model itu dipakai.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -2132,6 +2160,7 @@ jujur tanpa menambah lapisan routing baru.
 | 33 | Ikon kapabilitas di Performance | 0,5 hari | ✅ tools/vision/reasoning |
 | 34 | Sortir Performance, usage per client key, biaya provider-aware | 1 hari | ✅ klik header + `group=client` + harga katalog |
 | 35 | Status runtime member combo | 0,5 hari | ✅ highlight member aktif + tooltip last error |
+| 36 | Tanggal pada last seen | 0,1 hari | ✅ `YYYY-MM-DD HH:MM:SS` di tabel Performance |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

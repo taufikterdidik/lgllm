@@ -1057,6 +1057,18 @@ function fmtMs(value) {
   return (value < 10 ? value.toFixed(1) : Math.round(value)) + ' ms';
 }
 
+// fmtDateTime renders a local timestamp with both date and time. The compact
+// YYYY-MM-DD HH:MM:SS shape keeps a table column narrow and sorts visually;
+// the underlying sort still uses the raw timestamp, not this string.
+function fmtDateTime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '—';
+  const pad = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+    ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
 // fmtRate trims trailing zeros while keeping enough precision for cache prices
 // such as 0.0028 or 0.08334.
 function fmtRate(v) {
@@ -1367,7 +1379,7 @@ function connectionTable(m) {
       fmtMs(percentileOrAvg(mode, 'latency_ms')),
       tpsCell(mode),
       perfModes(c),
-      c.last_seen ? new Date(c.last_seen).toLocaleTimeString() : '—',
+      fmtDateTime(c.last_seen),
     ];
   });
   return table(
@@ -1532,7 +1544,7 @@ async function renderPerformance() {
             tpsCell(mode),
             sparkline(m.series || [], 'tps'),
             perfModes(m),
-            m.last_seen ? new Date(m.last_seen).toLocaleTimeString() : '—',
+            fmtDateTime(m.last_seen),
           ],
         };
       });
