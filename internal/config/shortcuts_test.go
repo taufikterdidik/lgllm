@@ -90,9 +90,9 @@ func TestParseRejectsBadShortcuts(t *testing.T) {
 			want: "requires force_reasoning_effort",
 		},
 		{
-			name: "none is not an accepted effort",
-			yaml: "combos:\n  - name: coding\n    members: [ds/a]\n    force_reasoning_effort: true\n    reasoning_effort: none\n",
-			want: "off|minimal|low|medium|high|xhigh|max",
+			name: "unknown reasoning effort",
+			yaml: "combos:\n  - name: coding\n    members: [ds/a]\n    force_reasoning_effort: true\n    reasoning_effort: sometimes\n",
+			want: "off|none|minimal|low|medium|high|xhigh|max",
 		},
 		{
 			name: "alias and combo share a name",
@@ -135,6 +135,10 @@ combos:
     members: [ds/a]
     force_reasoning_effort: true
     reasoning_effort: off
+  - name: coding-none
+    members: [ds/a]
+    force_reasoning_effort: true
+    reasoning_effort: none
 `))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -145,6 +149,9 @@ combos:
 	}
 	if cfg.Combos[1].ReasoningEffort != "off" {
 		t.Errorf("off effort = %q", cfg.Combos[1].ReasoningEffort)
+	}
+	if cfg.Combos[2].ReasoningEffort != "none" {
+		t.Errorf("none effort = %q", cfg.Combos[2].ReasoningEffort)
 	}
 }
 

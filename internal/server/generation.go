@@ -169,15 +169,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, in ingress) {
 // buildOutbound renders the upstream request body, then applies a combo-level
 // reasoning override after translation. Applying it last means it wins over the
 // client's field for passthrough and translated requests alike.
-func buildOutbound(req *generationRequest, format, model string) ([]byte, error) {
-	body, err := buildBaseOutbound(req, format, model)
+func buildOutbound(req *generationRequest, provider *registry.Provider, model string) ([]byte, error) {
+	body, err := buildBaseOutbound(req, provider.Format, model)
 	if err != nil {
 		return nil, err
 	}
 	if req.reasoningEffort == "" {
 		return body, nil
 	}
-	return applyReasoningEffort(body, format, req.reasoningEffort)
+	return applyReasoningEffort(body, provider, req.reasoningEffort)
 }
 
 // buildBaseOutbound renders the upstream request body.

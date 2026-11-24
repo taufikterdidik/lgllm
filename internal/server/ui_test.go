@@ -93,7 +93,8 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 	}
 	if !strings.Contains(js.Body.String(), "REASONING_EFFORT_OPTIONS") ||
 		!strings.Contains(js.Body.String(), "force_reasoning_effort") ||
-		!strings.Contains(js.Body.String(), `'off'`) {
+		!strings.Contains(js.Body.String(), `'off'`) ||
+		!strings.Contains(js.Body.String(), `'none'`) {
 		t.Error("app.js does not expose combo reasoning effort")
 	}
 	if !strings.Contains(page.Body.String(), `data-tab="performance"`) {

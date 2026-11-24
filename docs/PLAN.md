@@ -2132,8 +2132,12 @@ jujur tanpa menambah lapisan routing baru.
 - **Config.** `combos[]` menambahkan `force_reasoning_effort: bool` dan
   `reasoning_effort: string`. Nilai dinormalisasi ke lowercase; force tanpa
   nilai ditolak, nilai tanpa force ditolak, dan nilai yang tidak dikenal ditolak.
-- **Nilai.** `off|minimal|low|medium|high|xhigh|max`. `off` dipakai, bukan
-  `none`, karena gateway yang diuji menolak `none` tetapi menerima `off`.
+- **Nilai.** `off|none|minimal|low|medium|high|xhigh|max`. `off` dan `none`
+  sama-sama berarti "tidak reasoning"; nilainya diterjemahkan per provider.
+- **Mapping dinamis.** OpenCode hanya menerima `none` dan Command Code hanya
+  menerima `off`, jadi `providerReasoningEffort` menormalkan kedua nilai:
+  `opencode-go` → `none`, `commandcode` → `off`, provider lain memakai nilai
+  yang dipilih apa adanya. Berlaku untuk Chat dan Responses.
 - **Registry.** `Combo` dan `Plan` membawa kedua field, sehingga override ikut
   terbawa ke setiap attempt dan fallback.
 - **Penerapan.** `buildOutbound` menerapkan override setelah body selesai
@@ -2146,9 +2150,10 @@ jujur tanpa menambah lapisan routing baru.
 - **API & UI.** `GET/POST/PUT /api/combos` membawa kedua field. Form combo punya
   checkbox **Force reasoning effort** dan dropdown nilai; dropdown hanya aktif
   saat checkbox dicentang. Tabel combo menampilkan `force <nilai>`.
-- **Verifikasi.** Test config (termasuk penolakan `none`), test plan, unit test
-  transformasi body Chat/Responses, test request same-dialect dan lintas dialek,
-  test API admin, test UI statis, serta smoke Playwright.
+- **Verifikasi.** Test config (termasuk `off` dan `none`), test plan, unit test
+  transformasi body Chat/Responses dan mapping provider, test request
+  same-dialect dan lintas dialek, test API admin, test UI statis, serta smoke
+  Playwright.
 
 ### 37b. Belum masuk fase 37
 

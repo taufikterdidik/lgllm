@@ -130,7 +130,7 @@ func (s *Server) runPlan(w http.ResponseWriter, r *http.Request, req *generation
 func (s *Server) tryProvider(w http.ResponseWriter, r *http.Request, req *generationRequest, attempt registry.Attempt, moreAttempts bool, failures *[]attemptFailure) attemptOutcome {
 	provider := attempt.Provider
 
-	outbound, err := buildOutbound(req, provider.Format, attempt.Model)
+	outbound, err := buildOutbound(req, provider, attempt.Model)
 	if err != nil {
 		// The client's body cannot be rendered for this provider; another
 		// member would receive the same body, so this is final.

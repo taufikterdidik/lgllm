@@ -303,9 +303,11 @@ applied to OpenAI Chat Completions (`reasoning_effort`) and Responses
 (`reasoning.effort`) members after translation, preserving unrelated fields.
 Anthropic `thinking` and Gemini thinking configuration are not mapped because
 their controls are not one-to-one with effort levels. The UI offers
-`off|minimal|low|medium|high|xhigh|max`; `off` is used instead of OpenAI's
-`none`, which the tested gateways rejected. Not every model accepts every level,
-so the value is sent as-is.
+`off|none|minimal|low|medium|high|xhigh|max`. `off` and `none` both mean "do not
+reason"; the server translates them to the spelling the provider accepts:
+OpenCode gets `none`, Command Code gets `off`, and other providers receive the
+selected value unchanged. Not every model accepts every level, so the value is
+sent as-is.
 
 ### Observability
 

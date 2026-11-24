@@ -373,7 +373,7 @@ func (c *Config) validateProviders(add func(string, ...any)) {
 			add("%s.reasoning_effort requires force_reasoning_effort: true", where)
 		}
 		if cb.ReasoningEffort != "" && !validReasoningEffort(cb.ReasoningEffort) {
-			add("%s.reasoning_effort %q is not one of off|minimal|low|medium|high|xhigh|max",
+			add("%s.reasoning_effort %q is not one of off|none|minimal|low|medium|high|xhigh|max",
 				where, cb.ReasoningEffort)
 		}
 
@@ -594,12 +594,12 @@ func formatProblems(problems []string) error {
 	}
 }
 
-// validReasoningEffort lists the values the dashboards offer. "off" replaces
-// OpenAI's "none": provider tests rejected none while off was accepted, and off
-// is also the clearest name for disabling the field.
+// validReasoningEffort lists the values the dashboards offer. off and none are
+// aliases for the same "do not reason" intent; the outbound path translates
+// them to whichever spelling a provider accepts.
 func validReasoningEffort(value string) bool {
 	switch value {
-	case "off", "minimal", "low", "medium", "high", "xhigh", "max":
+	case "off", "none", "minimal", "low", "medium", "high", "xhigh", "max":
 		return true
 	}
 	return false

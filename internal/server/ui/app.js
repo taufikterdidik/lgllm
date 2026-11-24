@@ -95,10 +95,10 @@ const AUTH_OPTIONS = [
   { value: 'none', label: 'No authentication' },
 ];
 
-// Values offered for combos that force a reasoning effort. "off" is used
-// instead of OpenAI's "none": the upstream gateways tested here rejected none
-// but accepted off.
-const REASONING_EFFORT_OPTIONS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+// Values offered for combos that force a reasoning effort. off and none both
+// mean "do not reason"; the server translates them to the spelling each provider
+// accepts (OpenCode uses none, Command Code uses off).
+const REASONING_EFFORT_OPTIONS = ['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 let formSequence = 0;
 

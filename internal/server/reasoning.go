@@ -10,8 +10,9 @@ import (
 // body. Only OpenAI Chat and Responses have a direct equivalent; Anthropic
 // thinking budgets and Gemini thinking configuration are not one-to-one, so
 // they are left untouched.
-func applyReasoningEffort(body []byte, format, effort string) ([]byte, error) {
-	switch format {
+func applyReasoningEffort(body []byte, provider *registry.Provider, effort string) ([]byte, error) {
+	effort = providerReasoningEffort(provider, effort)
+	switch provider.Format {
 	case registry.FormatChat:
 		return setTopLevelReasoningEffort(body, effort)
 	case registry.FormatResponses:
@@ -19,6 +20,25 @@ func applyReasoningEffort(body []byte, format, effort string) ([]byte, error) {
 	default:
 		return body, nil
 	}
+}
+
+// providerReasoningEffort translates the two spellings of "do not reason".
+// OpenCode answers "off" with an invalid-effort error and needs "none";
+// Command Code is the reverse. Unknown providers keep whatever the combo chose.
+func providerReasoningEffort(provider *registry.Provider, effort string) string {
+	if effort != "off" && effort != "none" {
+		return effort
+	}
+	if provider == nil {
+		return effort
+	}
+	switch provider.ID {
+	case "opencode-go", "opencode-go-anthropic", "opencode-systemone":
+		return "none"
+	case "commandcode", "commandcode-claude", "commandcode-systemone":
+		return "off"
+	}
+	return effort
 }
 
 func setTopLevelReasoningEffort(body []byte, effort string) ([]byte, error) {
