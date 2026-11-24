@@ -80,6 +80,21 @@ func TestParseRejectsBadShortcuts(t *testing.T) {
 			want: "at least one",
 		},
 		{
+			name: "force reasoning without a value",
+			yaml: "combos:\n  - name: coding\n    members: [ds/a]\n    force_reasoning_effort: true\n",
+			want: "reasoning_effort is required",
+		},
+		{
+			name: "reasoning value without force",
+			yaml: "combos:\n  - name: coding\n    members: [ds/a]\n    reasoning_effort: high\n",
+			want: "requires force_reasoning_effort",
+		},
+		{
+			name: "none is not an accepted effort",
+			yaml: "combos:\n  - name: coding\n    members: [ds/a]\n    force_reasoning_effort: true\n    reasoning_effort: none\n",
+			want: "off|minimal|low|medium|high|xhigh|max",
+		},
+		{
 			name: "alias and combo share a name",
 			yaml: "aliases:\n  coding: ds/a\ncombos:\n  - name: coding\n    members: [ds/a]\n",
 			want: "already used by a combo",
@@ -105,6 +120,31 @@ func TestParseRejectsBadShortcuts(t *testing.T) {
 				t.Errorf("error = %v, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseComboReasoningEffort(t *testing.T) {
+	cfg, err := Parse([]byte(shortcutBase + `
+combos:
+  - name: coding
+    strategy: priority
+    members: [ds/a]
+    force_reasoning_effort: true
+    reasoning_effort: " HIGH "
+  - name: coding-off
+    members: [ds/a]
+    force_reasoning_effort: true
+    reasoning_effort: off
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cb := cfg.Combos[0]
+	if !cb.ForceReasoningEffort || cb.ReasoningEffort != "high" {
+		t.Errorf("reasoning = force %v, value %q", cb.ForceReasoningEffort, cb.ReasoningEffort)
+	}
+	if cfg.Combos[1].ReasoningEffort != "off" {
+		t.Errorf("off effort = %q", cfg.Combos[1].ReasoningEffort)
 	}
 }
 

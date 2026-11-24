@@ -231,6 +231,7 @@ func (c *Config) normalize() {
 		cb := &c.Combos[i]
 		cb.Name = strings.TrimSpace(cb.Name)
 		cb.Strategy = strings.ToLower(strings.TrimSpace(cb.Strategy))
+		cb.ReasoningEffort = strings.ToLower(strings.TrimSpace(cb.ReasoningEffort))
 		for j := range cb.Members {
 			cb.Members[j] = strings.TrimSpace(cb.Members[j])
 		}
@@ -362,6 +363,18 @@ func (c *Config) validateProviders(add func(string, ...any)) {
 		case "", "priority", "round-robin":
 		default:
 			add("%s.strategy %q is not one of priority|round-robin", where, cb.Strategy)
+		}
+
+		if cb.ForceReasoningEffort {
+			if cb.ReasoningEffort == "" {
+				add("%s.reasoning_effort is required when force_reasoning_effort is true", where)
+			}
+		} else if cb.ReasoningEffort != "" {
+			add("%s.reasoning_effort requires force_reasoning_effort: true", where)
+		}
+		if cb.ReasoningEffort != "" && !validReasoningEffort(cb.ReasoningEffort) {
+			add("%s.reasoning_effort %q is not one of off|minimal|low|medium|high|xhigh|max",
+				where, cb.ReasoningEffort)
 		}
 
 		if len(cb.Members) == 0 {
@@ -579,6 +592,17 @@ func formatProblems(problems []string) error {
 	default:
 		return errors.New("invalid config:\n  - " + strings.Join(problems, "\n  - "))
 	}
+}
+
+// validReasoningEffort lists the values the dashboards offer. "off" replaces
+// OpenAI's "none": provider tests rejected none while off was accepted, and off
+// is also the clearest name for disabling the field.
+func validReasoningEffort(value string) bool {
+	switch value {
+	case "off", "minimal", "low", "medium", "high", "xhigh", "max":
+		return true
+	}
+	return false
 }
 
 func validFormat(f string) bool {

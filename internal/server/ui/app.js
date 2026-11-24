@@ -95,6 +95,11 @@ const AUTH_OPTIONS = [
   { value: 'none', label: 'No authentication' },
 ];
 
+// Values offered for combos that force a reasoning effort. "off" is used
+// instead of OpenAI's "none": the upstream gateways tested here rejected none
+// but accepted off.
+const REASONING_EFFORT_OPTIONS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
 let formSequence = 0;
 
 function formField(label, control, hint) {
@@ -637,6 +642,15 @@ function openComboForm(existing, providers) {
     { value: 'false', label: 'Off' },
   ], existing && existing.token_saver !== undefined && existing.token_saver !== null
     ? String(existing.token_saver) : '');
+  const forceEffort = checkboxInput('Force reasoning effort',
+    existing ? existing.force_reasoning_effort : false);
+  const effort = selectInput(
+    REASONING_EFFORT_OPTIONS.map((value) => ({ value, label: value })),
+    existing && existing.reasoning_effort ? existing.reasoning_effort : 'high',
+  );
+  const syncEffort = () => { effort.disabled = !forceEffort.input.checked; };
+  forceEffort.input.addEventListener('change', syncEffort);
+  syncEffort();
   const members = memberEditor(existing ? existing.members || [] : [], providers);
 
   const content = [
@@ -644,6 +658,10 @@ function openComboForm(existing, providers) {
       formField('Name', name, existing ? 'Combo names are fixed; create a new combo to rename.' : ''),
       formField('Strategy', strategy),
       formField('Token saver', tokenSaver),
+      formField('Force reasoning effort', forceEffort.node,
+        'Ignore reasoning_effort from the client for this combo. Only OpenAI Chat and Responses members receive the override.'),
+      formField('Reasoning effort', effort,
+        'Value sent as reasoning_effort or reasoning.effort when forcing is on.'),
     ]),
     formSection('Members', [members.node], 'Order matters for priority. Pick a model or type an alias/combo name.'),
   ];
@@ -654,6 +672,8 @@ function openComboForm(existing, providers) {
     if (!list.length) throw new Error('Add at least one member');
     const dto = { name: name.value.trim(), members: list, strategy: strategy.value };
     if (tokenSaver.value !== '') dto.token_saver = tokenSaver.value === 'true';
+    dto.force_reasoning_effort = forceEffort.input.checked;
+    if (forceEffort.input.checked) dto.reasoning_effort = effort.value;
 
     if (existing) {
       await api('/api/combos/' + encodeURIComponent(existing.name), {
@@ -916,11 +936,14 @@ async function renderCombos() {
     }
     const saver = c.token_saver === undefined || c.token_saver === null
       ? 'inherit' : (c.token_saver ? 'on' : 'off');
+    const reasoning = c.force_reasoning_effort
+      ? 'force ' + (c.reasoning_effort || '—') : '—';
     const context = c.context_known ? fmtContext(c.context_length) : 'unknown';
     return [
       c.name,
       comboMembersCell(c),
       c.strategy || 'priority',
+      reasoning,
       context,
       saver,
       badge(c.managed, c.managed === 'admin' ? 'admin' : ''),
@@ -937,7 +960,7 @@ async function renderCombos() {
       }),
       el('span', { class: 'muted', text: 'A combo is a named list of models tried in order or round-robin.' }),
     ]),
-    table(['name', 'members', 'strategy', 'ctx min', 'token saver', 'source', 'actions'], rows),
+    table(['name', 'members', 'strategy', 'reasoning', 'ctx min', 'token saver', 'source', 'actions'], rows),
   );
 }
 

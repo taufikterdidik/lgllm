@@ -391,6 +391,36 @@ func TestPlanRoundRobinRotatesStartingMember(t *testing.T) {
 	}
 }
 
+func TestPlanCarriesComboReasoningEffort(t *testing.T) {
+	cfg := shortcutConfig()
+	cfg.Combos = []config.Combo{{
+		Name:                 "coding",
+		Members:              []string{"acme/acme-small"},
+		ForceReasoningEffort: true,
+		ReasoningEffort:      "high",
+	}}
+	r, err := New(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := r.Plan("coding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.ForceReasoningEffort || plan.ReasoningEffort != "high" {
+		t.Errorf("plan reasoning = force %v, value %q",
+			plan.ForceReasoningEffort, plan.ReasoningEffort)
+	}
+
+	plain, err := r.Plan("acme/acme-small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.ForceReasoningEffort || plain.ReasoningEffort != "" {
+		t.Errorf("a plain target inherited a combo effort: %+v", plain)
+	}
+}
+
 func TestPlanCarriesComboTokenSaverOptOut(t *testing.T) {
 	off := false
 	cfg := shortcutConfig()

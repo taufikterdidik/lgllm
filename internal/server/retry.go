@@ -51,6 +51,9 @@ type generationRequest struct {
 	// attempted, so a successful response can update the Combo tab state.
 	combo       string
 	comboMember string
+	// reasoningEffort overrides the client's value in buildOutbound. It is empty
+	// when the matched combo does not force one.
+	reasoningEffort string
 }
 
 // attemptFailure is one failed (provider, connection) pair, reported to the

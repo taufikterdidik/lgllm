@@ -317,9 +317,18 @@ func TestAdminComboAndKeyCrud(t *testing.T) {
 	s, _, _ := newAdminTestServer(t, false)
 
 	create := do(s, adminRequest(http.MethodPost, "/api/combos", adminTestToken,
-		`{"name":"extra-combo","members":["testprov/test-model"]}`))
+		`{"name":"extra-combo","members":["testprov/test-model"],"force_reasoning_effort":true,"reasoning_effort":"high"}`))
 	if create.Code != http.StatusCreated {
 		t.Fatalf("combo create status = %d, body = %s", create.Code, create.Body)
+	}
+	if !strings.Contains(create.Body.String(), `"force_reasoning_effort":true`) ||
+		!strings.Contains(create.Body.String(), `"reasoning_effort":"high"`) {
+		t.Errorf("combo create lost reasoning settings: %s", create.Body)
+	}
+	combosList := do(s, adminRequest(http.MethodGet, "/api/combos", adminTestToken, ""))
+	if !strings.Contains(combosList.Body.String(), `"force_reasoning_effort":true`) ||
+		!strings.Contains(combosList.Body.String(), `"reasoning_effort":"high"`) {
+		t.Errorf("combo list lost reasoning settings: %s", combosList.Body)
 	}
 	if put := do(s, adminRequest(http.MethodPut, "/api/combos/extra-combo", adminTestToken,
 		`{"members":["testprov/test-model"],"strategy":"priority"}`)); put.Code != http.StatusOK {

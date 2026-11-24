@@ -992,6 +992,10 @@ type Combo struct {
 	Strategy string
 	// TokenSaverOff mirrors the config's per-combo opt-out.
 	TokenSaverOff bool
+	// ForceReasoningEffort and ReasoningEffort are copied from the config so a
+	// plan can override the client's value for this combo.
+	ForceReasoningEffort bool
+	ReasoningEffort      string
 	// next is the round-robin cursor. Atomic because one snapshot serves
 	// concurrent requests; a reload starts again at member zero.
 	next atomic.Uint64
@@ -1090,10 +1094,12 @@ func (r *Registry) compileShortcuts(cfg *config.Config) {
 	r.combos = make(map[string]*Combo, len(cfg.Combos))
 	for _, cb := range cfg.Combos {
 		r.combos[cb.Name] = &Combo{
-			Name:          cb.Name,
-			Members:       append([]string(nil), cb.Members...),
-			Strategy:      cb.Strategy,
-			TokenSaverOff: cb.TokenSaver != nil && !*cb.TokenSaver,
+			Name:                 cb.Name,
+			Members:              append([]string(nil), cb.Members...),
+			Strategy:             cb.Strategy,
+			TokenSaverOff:        cb.TokenSaver != nil && !*cb.TokenSaver,
+			ForceReasoningEffort: cb.ForceReasoningEffort,
+			ReasoningEffort:      cb.ReasoningEffort,
 		}
 	}
 }
@@ -1226,7 +1232,11 @@ type Plan struct {
 	Combo     string
 	// TokenSaverOff is set when the matched combo opted out.
 	TokenSaverOff bool
-	Attempts      []Attempt
+	// ForceReasoningEffort and ReasoningEffort are set when the matched combo
+	// overrides the client's reasoning effort.
+	ForceReasoningEffort bool
+	ReasoningEffort      string
+	Attempts             []Attempt
 }
 
 // Plan resolves a client model string without committing to a single provider.
@@ -1330,10 +1340,12 @@ func (r *Registry) planCombo(cb *Combo) (Plan, error) {
 		usable = append(usable[idx:], usable[:idx]...)
 	}
 	return Plan{
-		Requested:     cb.Name,
-		Combo:         cb.Name,
-		TokenSaverOff: cb.TokenSaverOff,
-		Attempts:      usable,
+		Requested:            cb.Name,
+		Combo:                cb.Name,
+		TokenSaverOff:        cb.TokenSaverOff,
+		ForceReasoningEffort: cb.ForceReasoningEffort,
+		ReasoningEffort:      cb.ReasoningEffort,
+		Attempts:             usable,
 	}, nil
 }
 

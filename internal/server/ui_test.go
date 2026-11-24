@@ -91,6 +91,11 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 		!strings.Contains(js.Body.String(), "member_errors") {
 		t.Error("app.js does not annotate combo members with runtime state")
 	}
+	if !strings.Contains(js.Body.String(), "REASONING_EFFORT_OPTIONS") ||
+		!strings.Contains(js.Body.String(), "force_reasoning_effort") ||
+		!strings.Contains(js.Body.String(), `'off'`) {
+		t.Error("app.js does not expose combo reasoning effort")
+	}
 	if !strings.Contains(page.Body.String(), `data-tab="performance"`) {
 		t.Error("index does not have a performance tab")
 	}

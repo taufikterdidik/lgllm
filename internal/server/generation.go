@@ -143,31 +143,50 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, in ingress) {
 
 	requestID := RequestID(r.Context())
 	clientKey := clientIdentity(r)
+	reasoningEffort := ""
+	if plan.ForceReasoningEffort {
+		reasoningEffort = plan.ReasoningEffort
+	}
 	req := &generationRequest{
-		in:           in,
-		body:         body,
-		payload:      payload,
-		requested:    requested,
-		stream:       stream,
-		session:      sessionKey(r, payload),
-		conversation: conversationSession(r, payload, requestID, clientKey),
-		pivot:        pivot,
-		stats:        stats,
-		saving:       saving,
-		start:        start,
-		requestID:    requestID,
-		clientKey:    clientKey,
+		in:              in,
+		body:            body,
+		payload:         payload,
+		requested:       requested,
+		stream:          stream,
+		session:         sessionKey(r, payload),
+		conversation:    conversationSession(r, payload, requestID, clientKey),
+		pivot:           pivot,
+		stats:           stats,
+		saving:          saving,
+		start:           start,
+		requestID:       requestID,
+		clientKey:       clientKey,
+		reasoningEffort: reasoningEffort,
 	}
 	s.runPlan(w, r, req, plan)
 }
 
-// buildOutbound renders the upstream request body.
+// buildOutbound renders the upstream request body, then applies a combo-level
+// reasoning override after translation. Applying it last means it wins over the
+// client's field for passthrough and translated requests alike.
+func buildOutbound(req *generationRequest, format, model string) ([]byte, error) {
+	body, err := buildBaseOutbound(req, format, model)
+	if err != nil {
+		return nil, err
+	}
+	if req.reasoningEffort == "" {
+		return body, nil
+	}
+	return applyReasoningEffort(body, format, req.reasoningEffort)
+}
+
+// buildBaseOutbound renders the upstream request body.
 //
 // The client body is decoded once (when translation or token saving needs the
 // pivot) and re-encoded per attempt, because each combo member may speak a
 // different format. When the provider matches the client dialect and the saver
 // changed nothing, the original bytes are forwarded unchanged.
-func buildOutbound(req *generationRequest, format, model string) ([]byte, error) {
+func buildBaseOutbound(req *generationRequest, format, model string) ([]byte, error) {
 	sameDialect := format == ingressFormat(req.in)
 	if sameDialect && (req.pivot == nil || (!req.stats.Applied && !req.stats.SystemChanged)) {
 		if model == req.requested {

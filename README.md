@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–36 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–37 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -287,6 +287,25 @@ time; this is how the first member of a fallback shows why it was skipped. A
 successful request clears that member's error. The state is runtime-only:
 `GET /api/combos` exposes `last_member`, `last_used` and `member_errors` in
 memory, and a restart starts with no history.
+
+A combo can also **force a reasoning effort** for every request that uses it:
+
+```yaml
+combos:
+  - name: coding-high
+    members: [ocg/qwen4-max, cmd/Qwen/Qwen4-Max]
+    force_reasoning_effort: true
+    reasoning_effort: high
+```
+
+When enabled, the client's own `reasoning_effort` is ignored. The override is
+applied to OpenAI Chat Completions (`reasoning_effort`) and Responses
+(`reasoning.effort`) members after translation, preserving unrelated fields.
+Anthropic `thinking` and Gemini thinking configuration are not mapped because
+their controls are not one-to-one with effort levels. The UI offers
+`off|minimal|low|medium|high|xhigh|max`; `off` is used instead of OpenAI's
+`none`, which the tested gateways rejected. Not every model accepts every level,
+so the value is sent as-is.
 
 ### Observability
 

@@ -204,6 +204,11 @@ combos:
       - oa/gpt-4.1
       - ds/deepseek-chat
     # token_saver: false   # opt this combo out of tool-result compression
+    # Force one reasoning effort for every request routed through this combo.
+    # Only OpenAI Chat and Responses members receive the override; Anthropic
+    # and Gemini thinking settings are not mapped. "off" disables the hint.
+    # force_reasoning_effort: true
+    # reasoning_effort: high   # off|minimal|low|medium|high|xhigh|max
 
 tokensaver:
   # Compress large tool results (git diff, grep, JSON, logs) before they are

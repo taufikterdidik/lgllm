@@ -150,6 +150,10 @@ type adminCombo struct {
 	ContextLength int      `json:"context_length,omitempty"`
 	ContextKnown  bool     `json:"context_known"`
 	Managed       string   `json:"managed"`
+	// ForceReasoningEffort makes ReasoningEffort override the client's value
+	// for OpenAI Chat and Responses members.
+	ForceReasoningEffort bool   `json:"force_reasoning_effort,omitempty"`
+	ReasoningEffort      string `json:"reasoning_effort,omitempty"`
 	// Runtime state for the Combo tab. LastMember is the member string exactly
 	// as configured; MemberErrors maps the same strings to their last failure.
 	LastMember   string                      `json:"last_member,omitempty"`
@@ -240,6 +244,8 @@ func comboDTO(c config.Combo, managed string) adminCombo {
 	return adminCombo{
 		Name: c.Name, Members: c.Members, Strategy: c.Strategy,
 		TokenSaver: c.TokenSaver, Managed: managed,
+		ForceReasoningEffort: c.ForceReasoningEffort,
+		ReasoningEffort:      c.ReasoningEffort,
 	}
 }
 
@@ -592,6 +598,8 @@ func (s *Server) handleAdminCombo(w http.ResponseWriter, r *http.Request) {
 func comboFromDTO(d adminCombo) config.Combo {
 	return config.Combo{
 		Name: d.Name, Members: d.Members, Strategy: d.Strategy, TokenSaver: d.TokenSaver,
+		ForceReasoningEffort: d.ForceReasoningEffort,
+		ReasoningEffort:      d.ReasoningEffort,
 	}
 }
 

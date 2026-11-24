@@ -2121,6 +2121,50 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 37. Force reasoning effort per combo — ✅ SELESAI
+
+> Status: combo bisa memaksa satu nilai reasoning effort untuk semua request
+> yang lewat combo tersebut, mengabaikan nilai dari client. Cakupan format:
+> OpenAI Chat Completions dan OpenAI Responses.
+
+### 37a. Keputusan implementasi — ✅ SELESAI
+
+- **Config.** `combos[]` menambahkan `force_reasoning_effort: bool` dan
+  `reasoning_effort: string`. Nilai dinormalisasi ke lowercase; force tanpa
+  nilai ditolak, nilai tanpa force ditolak, dan nilai yang tidak dikenal ditolak.
+- **Nilai.** `off|minimal|low|medium|high|xhigh|max`. `off` dipakai, bukan
+  `none`, karena gateway yang diuji menolak `none` tetapi menerima `off`.
+- **Registry.** `Combo` dan `Plan` membawa kedua field, sehingga override ikut
+  terbawa ke setiap attempt dan fallback.
+- **Penerapan.** `buildOutbound` menerapkan override setelah body selesai
+  dirender/diterjemahkan. OpenAI Chat mendapat `reasoning_effort`; Responses
+  hanya mengganti `reasoning.effort` dan mempertahankan field lain seperti
+  `reasoning.summary`. Format Anthropic, Gemini, Ollama, dan System One tidak
+  diubah.
+- **Cakupan request.** Berlaku untuk passthrough, retry/fallback, dan request
+  lintas dialek (mis. Anthropic ingress → provider OpenAI).
+- **API & UI.** `GET/POST/PUT /api/combos` membawa kedua field. Form combo punya
+  checkbox **Force reasoning effort** dan dropdown nilai; dropdown hanya aktif
+  saat checkbox dicentang. Tabel combo menampilkan `force <nilai>`.
+- **Verifikasi.** Test config (termasuk penolakan `none`), test plan, unit test
+  transformasi body Chat/Responses, test request same-dialect dan lintas dialek,
+  test API admin, test UI statis, serta smoke Playwright.
+
+### 37b. Belum masuk fase 37
+
+- **Anthropic/Gemini.** Belum ada mapping effort → `thinking.budget_tokens` atau
+  `thinkingConfig`; keduanya tidak 1:1 dan butuh aturan `max_tokens`.
+- **Validasi per model.** Combo tidak mengecek apakah setiap member mendukung
+  nilai yang dipilih; nilai dikirim apa adanya.
+- **Custom value.** Config menolak nilai di luar daftar, sehingga level baru
+  dari provider harus ditambahkan ke kode.
+- **CLI.** `config combo add/set` belum punya flag untuk kedua field ini; saat
+  ini lewat YAML, admin API, atau UI.
+- **Observability.** Belum ada header/log khusus yang menandai request memakai
+  override combo.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -2161,6 +2205,7 @@ jujur tanpa menambah lapisan routing baru.
 | 34 | Sortir Performance, usage per client key, biaya provider-aware | 1 hari | ✅ klik header + `group=client` + harga katalog |
 | 35 | Status runtime member combo | 0,5 hari | ✅ highlight member aktif + tooltip last error |
 | 36 | Tanggal pada last seen | 0,1 hari | ✅ `YYYY-MM-DD HH:MM:SS` di tabel Performance |
+| 37 | Force reasoning effort per combo | 0,5 hari | ✅ override Chat/Responses dari combo |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

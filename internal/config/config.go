@@ -123,6 +123,13 @@ type Combo struct {
 	// TokenSaver overrides the global tokensaver.enabled for this combo when
 	// set. A pointer distinguishes "not specified" from "explicitly off".
 	TokenSaver *bool `yaml:"token_saver"`
+	// ForceReasoningEffort makes ReasoningEffort win over whatever the client
+	// sent. It only affects formats with an equivalent field (OpenAI Chat and
+	// Responses); Anthropic/Gemini keep their own thinking configuration.
+	ForceReasoningEffort bool `yaml:"force_reasoning_effort"`
+	// ReasoningEffort is the value sent as reasoning_effort (Chat) or
+	// reasoning.effort (Responses) when ForceReasoningEffort is true.
+	ReasoningEffort string `yaml:"reasoning_effort"`
 }
 
 // Admin configures the management API. It is off by default because every
