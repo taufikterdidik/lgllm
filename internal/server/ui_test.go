@@ -97,6 +97,14 @@ func TestAdminUIIsEmbeddedAndGated(t *testing.T) {
 		!strings.Contains(js.Body.String(), `'none'`) {
 		t.Error("app.js does not expose combo reasoning effort")
 	}
+	if !strings.Contains(js.Body.String(), "renderPlayground") ||
+		!strings.Contains(js.Body.String(), "/api/playground/models") ||
+		!strings.Contains(js.Body.String(), "/api/playground/chat") {
+		t.Error("app.js does not implement the playground")
+	}
+	if !strings.Contains(page.Body.String(), `data-tab="playground"`) {
+		t.Error("index does not have a playground tab")
+	}
 	if !strings.Contains(page.Body.String(), `data-tab="performance"`) {
 		t.Error("index does not have a performance tab")
 	}

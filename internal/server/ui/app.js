@@ -27,6 +27,15 @@ const state = {
   perfScale: localStorage.getItem('lgllm.perf.scale') === 'log' ? 'log' : 'linear',
   perfSort: parsePerfSort(localStorage.getItem('lgllm.perf.sort')),
   usageGroup: 'provider',
+  playground: {
+    model: localStorage.getItem('lgllm.playground.model') || '',
+    stream: localStorage.getItem('lgllm.playground.stream') !== 'false',
+    system: '',
+    temperature: '',
+    maxTokens: '',
+    messages: [],
+    abort: null,
+  },
 };
 
 const view = document.getElementById('view');
@@ -394,6 +403,7 @@ async function render() {
       case 'keys': return await renderKeys();
       case 'usage': return await renderUsage();
       case 'performance': return await renderPerformance();
+      case 'playground': return await renderPlayground();
       case 'logs': return await renderLogs();
       case 'settings': return await renderSettings();
     }
@@ -1604,6 +1614,312 @@ async function renderPerformance() {
       el('span', { class: 'muted', text: 'p50 of the last N attempts; average remains in the API and metrics; charts default to linear, log compresses wide spreads; click a row for charts; refresh 5 s' }),
     ]),
     host,
+  );
+}
+
+// --- playground --------------------------------------------------------------
+
+// renderPlayground is a small chat client for the models this proxy exposes. It
+// posts to an admin endpoint that feeds the request through the normal routing
+// pipeline, so the answer shows the same fallback, translation and usage as a
+// real client without needing an inference key in the browser.
+async function renderPlayground() {
+  const pg = state.playground;
+  const payload = await api('/api/playground/models');
+  const models = payload.data || [];
+
+  const modelSelect = el('select', { class: 'pg-model' });
+  const groups = new Map();
+  for (const m of models) {
+    const owner = m.owned_by || 'models';
+    if (!groups.has(owner)) groups.set(owner, []);
+    groups.get(owner).push(m);
+  }
+  for (const [owner, list] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const group = el('optgroup', { label: owner });
+    for (const m of list) {
+      const label = m.id + (m.context_length ? ' · ' + fmtContext(m.context_length) : '');
+      const opt = el('option', { value: m.id, text: label });
+      if (m.id === pg.model) opt.selected = true;
+      group.appendChild(opt);
+    }
+    modelSelect.appendChild(group);
+  }
+  if (!models.some((m) => m.id === pg.model)) {
+    pg.model = models.length ? models[0].id : '';
+  }
+  modelSelect.value = pg.model;
+  modelSelect.addEventListener('change', () => {
+    pg.model = modelSelect.value;
+    localStorage.setItem('lgllm.playground.model', pg.model);
+  });
+
+  const stream = checkboxInput('Stream', pg.stream);
+  stream.input.addEventListener('change', () => {
+    pg.stream = stream.input.checked;
+    localStorage.setItem('lgllm.playground.stream', String(pg.stream));
+  });
+
+  const temperature = numberInput(pg.temperature, { step: '0.1', min: '0', max: '2' });
+  temperature.addEventListener('input', () => { pg.temperature = temperature.value; });
+  const maxTokens = numberInput(pg.maxTokens, { min: '1', placeholder: 'default' });
+  maxTokens.addEventListener('input', () => { pg.maxTokens = maxTokens.value; });
+
+  const system = el('textarea', {
+    rows: '3', placeholder: 'Optional system prompt',
+  });
+  system.value = pg.system;
+  system.addEventListener('input', () => { pg.system = system.value; });
+  const systemBox = el('details', { class: 'pg-system' }, [
+    el('summary', { text: 'System prompt' }), system,
+  ]);
+  systemBox.open = Boolean(pg.system);
+
+  const logEl = el('div', { class: 'chat-log' });
+  const composer = el('textarea', {
+    rows: '3',
+    placeholder: 'Type a message… Enter sends, Shift+Enter adds a newline',
+  });
+  const send = el('button', { class: 'primary', text: 'Send' });
+  const stop = el('button', { text: 'Stop' });
+  const clear = el('button', { text: 'Clear' });
+
+  function joinMeta(parts) {
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  function usageText(usage) {
+    if (!usage) return '';
+    const bits = [];
+    if (typeof usage.prompt_tokens === 'number') bits.push('prompt ' + usage.prompt_tokens);
+    if (typeof usage.completion_tokens === 'number') bits.push('completion ' + usage.completion_tokens);
+    if (typeof usage.total_tokens === 'number') bits.push('total ' + usage.total_tokens);
+    return bits.length ? 'tokens: ' + bits.join(' / ') : '';
+  }
+
+  function responseMeta(res) {
+    return joinMeta([
+      res.headers.get('X-Lgllm-Provider'),
+      res.headers.get('X-Lgllm-Model'),
+      res.headers.get('X-Lgllm-Token-Saver'),
+    ]);
+  }
+
+  function renderLog() {
+    logEl.replaceChildren();
+    if (!pg.messages.length) {
+      logEl.appendChild(el('p', {
+        class: 'muted',
+        text: models.length
+          ? 'Choose a model, then send a message. The conversation stays in this browser tab.'
+          : 'No chat models are available. Configure a provider and connection first.',
+      }));
+      return;
+    }
+    for (const m of pg.messages) {
+      const classes = ['msg', m.role];
+      if (m.error) classes.push('error');
+      if (m.pending) classes.push('pending');
+      const children = [
+        el('div', {
+          class: 'msg-role',
+          text: m.role + (m.pending ? ' · streaming…' : ''),
+        }),
+        el('div', {
+          class: 'msg-text',
+          text: m.content || (m.pending ? '' : '(empty response)'),
+        }),
+      ];
+      if (m.reasoning) {
+        children.push(el('details', { class: 'msg-reasoning' }, [
+          el('summary', { text: 'reasoning' }),
+          el('div', { class: 'msg-reasoning-text', text: m.reasoning }),
+        ]));
+      }
+      if (m.meta) children.push(el('div', { class: 'msg-meta', text: m.meta }));
+      logEl.appendChild(el('div', { class: classes.join(' ') }, children));
+    }
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function updateButtons() {
+    send.disabled = Boolean(pg.abort) || !models.length;
+    stop.disabled = !pg.abort;
+    composer.disabled = Boolean(pg.abort) || !models.length;
+  }
+
+  function historyForRequest() {
+    return pg.messages
+      .filter((m) => !m.pending && !m.error && (m.role === 'user' || m.role === 'assistant') && m.content)
+      .map((m) => ({ role: m.role, content: m.content }));
+  }
+
+  async function responseError(res) {
+    const text = await res.text();
+    try {
+      const body = JSON.parse(text);
+      if (body && body.error && body.error.message) return body.error.message;
+    } catch (_) { /* fall through to the raw text */ }
+    return text || ('HTTP ' + res.status);
+  }
+
+  async function readStream(res, assistant) {
+    if (!res.body) throw new Error('streaming is not supported by this browser');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let scheduled = false;
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        (pg.refresh || renderLog)();
+      });
+    };
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx).replace(/\r$/, '');
+        buffer = buffer.slice(idx + 1);
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data) continue;
+        if (data === '[DONE]') break outer;
+        let chunk;
+        try { chunk = JSON.parse(data); } catch (_) { continue; }
+        if (chunk.error) throw new Error(chunk.error.message || 'stream failed');
+        const choice = chunk.choices && chunk.choices[0];
+        if (choice) {
+          const delta = choice.delta || {};
+          if (delta.content) assistant.content += delta.content;
+          if (delta.reasoning_content) assistant.reasoning = (assistant.reasoning || '') + delta.reasoning_content;
+          if (choice.message && choice.message.content) {
+            assistant.content = choice.message.content;
+            if (choice.message.reasoning_content) assistant.reasoning = choice.message.reasoning_content;
+          }
+          if (delta.content || delta.reasoning_content) schedule();
+        }
+        if (chunk.usage) assistant.meta = joinMeta([assistant.meta, usageText(chunk.usage)]);
+      }
+    }
+  }
+
+  async function readJSON(res, assistant) {
+    const body = await res.json();
+    if (body && body.error) throw new Error(body.error.message || 'playground request failed');
+    const choice = body.choices && body.choices[0];
+    if (!choice) throw new Error('response has no choices');
+    const message = choice.message || {};
+    assistant.content = message.content || '';
+    assistant.reasoning = message.reasoning_content || '';
+    if (body.usage) assistant.meta = joinMeta([assistant.meta, usageText(body.usage)]);
+  }
+
+  async function sendMessage() {
+    const text = composer.value.trim();
+    if (!text || pg.abort || !pg.model) return;
+    pg.messages.push({ role: 'user', content: text });
+    const requestMessages = historyForRequest();
+    composer.value = '';
+
+    const assistant = {
+      role: 'assistant', content: '', reasoning: '', pending: true, meta: '',
+    };
+    pg.messages.push(assistant);
+    renderLog();
+
+    const controller = new AbortController();
+    pg.abort = controller;
+    updateButtons();
+    const started = performance.now();
+    try {
+      const request = { model: pg.model, messages: requestMessages, stream: pg.stream };
+      if (pg.system.trim()) {
+        request.messages = [{ role: 'system', content: pg.system.trim() }].concat(request.messages);
+      }
+      if (pg.temperature !== '' && Number.isFinite(Number(pg.temperature))) {
+        request.temperature = Number(pg.temperature);
+      }
+      if (pg.maxTokens !== '' && Number.isFinite(Number(pg.maxTokens)) && Number(pg.maxTokens) > 0) {
+        request.max_tokens = Math.trunc(Number(pg.maxTokens));
+      }
+      const headers = { 'Content-Type': 'application/json' };
+      if (state.token) headers['X-Admin-Token'] = state.token;
+      const res = await fetch('/api/playground/chat', {
+        method: 'POST', headers, body: JSON.stringify(request), signal: controller.signal,
+      });
+      assistant.meta = responseMeta(res);
+      if (!res.ok) throw new Error(await responseError(res));
+      const contentType = res.headers.get('Content-Type') || '';
+      if (pg.stream && contentType.includes('text/event-stream')) await readStream(res, assistant);
+      else await readJSON(res, assistant);
+      assistant.meta = joinMeta([
+        assistant.meta,
+        Math.round(performance.now() - started) + ' ms',
+      ]);
+      if (!assistant.content && !assistant.reasoning) assistant.content = '(empty response)';
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        if (!assistant.content && !assistant.reasoning) {
+          assistant.content = '(stopped)';
+          assistant.error = true;
+        }
+        assistant.meta = joinMeta([assistant.meta, 'stopped']);
+      } else {
+        assistant.error = true;
+        assistant.content = err.message;
+      }
+    } finally {
+      assistant.pending = false;
+      if (pg.abort === controller) pg.abort = null;
+      (pg.refresh || renderLog)();
+    }
+  }
+
+  send.addEventListener('click', sendMessage);
+  stop.addEventListener('click', () => {
+    if (pg.abort) pg.abort.abort();
+  });
+  clear.addEventListener('click', () => {
+    if (pg.abort) pg.abort.abort();
+    pg.messages = [];
+    pg.abort = null;
+    renderLog();
+    updateButtons();
+  });
+  composer.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage();
+    }
+  });
+
+  renderLog();
+  updateButtons();
+  pg.refresh = () => { renderLog(); updateButtons(); };
+
+  view.replaceChildren(
+    el('h2', { text: 'Playground' }),
+    el('div', { class: 'pg-options' }, [
+      formField('Model', modelSelect),
+      formField('Temperature', temperature, 'Empty uses the provider default.'),
+      formField('Max tokens', maxTokens, 'Empty uses the provider default.'),
+      formField('Stream', stream.node, 'SSE relayed through the normal proxy path.'),
+    ]),
+    systemBox,
+    logEl,
+    el('div', { class: 'pg-composer' }, [
+      composer,
+      el('div', { class: 'pg-actions' }, [send, stop]),
+    ]),
+    el('div', { class: 'toolbar' }, [
+      clear,
+      el('span', { class: 'muted', text: 'The admin token is used only for this endpoint and is not forwarded upstream.' }),
+    ]),
   );
 }
 

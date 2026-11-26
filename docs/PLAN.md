@@ -2170,6 +2170,53 @@ jujur tanpa menambah lapisan routing baru.
 
 ---
 
+## 38. Playground chat — ✅ SELESAI
+
+> Status: tab Playground di UI admin untuk test/chat model yang tersedia, dengan
+> streaming SSE, system prompt, temperature, max tokens, dan riwayat percakapan
+> di browser.
+
+### 38a. Keputusan implementasi — ✅ SELESAI
+
+- **Model list.** `GET /api/playground/models` menampilkan model konkret, alias,
+  dan combo yang punya translator chat. Format System One dan Ollama native
+  disembunyikan karena akan menghasilkan 501 pada ingress OpenAI Chat.
+- **Endpoint chat.** `POST /api/playground/chat` menerima body OpenAI Chat.
+  Handler menghapus header admin/inference dari request sintetis lalu memanggil
+  `serve()` langsung, sehingga routing, fallback, rotasi kredensial, translasi
+  format, token saver, metrics, usage, performance, dan combo settings tetap
+  berjalan seperti request client biasa.
+- **Tanpa key inference.** Endpoint berada di admin API dan memakai admin token;
+  token itu tidak diteruskan ke provider dan tidak dihitung sebagai client key.
+- **Streaming.** `stream: true` mengalirkan SSE dari provider ke browser. UI
+  membaca delta OpenAI (`content`, `reasoning_content`) dan menampilkan reasoning
+  dalam blok terlipat.
+- **UI.** Tab Playground punya pemilih model (dikelompokkan per owner), system
+  prompt, temperature, max tokens, toggle stream, Send/Stop/Clear, bubble
+  percakapan, usage, provider/model dari header, dan durasi request.
+- **Riwayat.** Percakapan disimpan di state browser selama tab hidup, tidak
+  ditulis ke `admin.yaml` atau database performance. Ganti tab membatalkan
+  request yang sedang berjalan.
+- **Verifikasi.** Test endpoint model/chat/stream, test auth admin, test UI
+  statis, dan smoke Playwright untuk streaming serta non-streaming.
+
+### 38b. Belum masuk fase 38
+
+- **Persistensi percakapan.** Riwayat hilang saat reload; belum ada sesi,
+  bookmark, atau export.
+- **Tool calls & multimodal.** Playground hanya mengirim teks; belum ada editor
+  tool/function call, upload gambar, atau audio.
+- **Kontrol lanjutan.** Belum ada stop per pesan, regenerate, edit pesan lama,
+  pilihan reasoning effort per request, atau parameter provider-specific.
+- **Pencarian model.** Select berisi semua model yang tersedia; belum ada filter
+  atau pencarian.
+- **Format ingress.** Playground selalu memakai OpenAI Chat sebagai ingress;
+  belum ada mode Anthropic Messages atau Responses dari UI.
+- **Keamanan tambahan.** Belum ada audit trail khusus playground atau batas
+  ukuran riwayat di browser.
+
+---
+
 ## Urutan eksekusi ringkas
 
 | Fase | Isi | Estimasi | Demo |
@@ -2211,6 +2258,7 @@ jujur tanpa menambah lapisan routing baru.
 | 35 | Status runtime member combo | 0,5 hari | ✅ highlight member aktif + tooltip last error |
 | 36 | Tanggal pada last seen | 0,1 hari | ✅ `YYYY-MM-DD HH:MM:SS` di tabel Performance |
 | 37 | Force reasoning effort per combo | 0,5 hari | ✅ override Chat/Responses dari combo |
+| 38 | Playground chat | 1 hari | ✅ tab Playground + streaming + usage |
 
 Total core (fase 1–7) realistis ~3 minggu kerja fokus. Fase 8–10 bisa berbulan-bulan
 kalau dikejar paritas dengan 9Router — jangan.

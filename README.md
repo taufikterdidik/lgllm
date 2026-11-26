@@ -6,7 +6,7 @@ Lightweight Go reimplementation of the core of [9Router](https://github.com/deco
 one [OI]-compatible endpoint in front of many LLM providers, with fallback,
 format translation and a token saver.
 
-**Status: phases 1–37 implemented.** Streaming proxy, declarative provider
+**Status: phases 1–38 implemented.** Streaming proxy, declarative provider
 registry, aliases/combos with prefix inference, format translation
 (OpenAI Chat/Anthropic/Gemini/Responses), combo fallback with credential rotation
 and cooldowns, token saver, Prometheus metrics + usage log, encrypted secrets and
@@ -241,6 +241,8 @@ keys. Without a token it is loopback-only and a public bind is refused.
 | `/api/logs?limit=N` | `GET` |
 | `/api/logs/stream` | `GET` (SSE, live entries) |
 | `/api/test-connection` | `POST {"provider":"...","model":"...","connection":"..."}` |
+| `/api/playground/models` | `GET` playground model list (models, aliases and combos with a chat translator) |
+| `/api/playground/chat` | `POST` an OpenAI Chat body; runs through normal routing, fallback and translation |
 
 `/api/usage?group=client` aggregates by the anonymized client identity used for
 rate limiting. Admin-created keys show their name; keys that only exist in
@@ -265,7 +267,8 @@ endpoints are empty and the live stream is unavailable.
 With `admin.enabled: true`, open `http://127.0.0.1:20128/ui/` and paste the admin
 token. The page is plain HTML/CSS/JS embedded in the binary (no Node, no asset
 directory) and has tabs for providers, connections, combos, keys, usage,
-performance, live logs, and settings. It calls the admin API with `X-Admin-Token`;
+performance, playground, live logs, and settings. It calls the admin API with
+`X-Admin-Token`;
 the token is kept in `localStorage` for that browser only. Static assets carry a
 strict `Content-Security-Policy` and are served without an inference key, while
 every API call still needs the admin token. When the admin API is off, `/ui/`
@@ -308,6 +311,25 @@ reason"; the server translates them to the spelling the provider accepts:
 OpenCode gets `none`, Command Code gets `off`, and other providers receive the
 selected value unchanged. Not every model accepts every level, so the value is
 sent as-is.
+
+### Playground
+
+The **Playground** tab is a small chat client for the models this proxy serves.
+It lists concrete models, aliases and combos that have a chat translator
+(System One and native Ollama are omitted), lets you set a system prompt,
+temperature, max tokens and streaming, and keeps the conversation in the browser
+tab. Requests go to
+`POST /api/playground/chat`; the handler removes the admin credential and feeds
+the body through the normal routing plan, so fallback, format translation, combo
+settings, token saver, performance samples and usage entries behave exactly as
+they do for a real client. `stream: true` relays SSE to the browser; a non-stream
+request returns the usual JSON envelope.
+
+The playground bypasses inference-key auth and rate limiting because it is an
+admin endpoint, but provider credentials, connection concurrency limits and
+upstream cooldowns still apply. The transcript is not a storage feature: it is
+in memory, disappears on reload, and is never written to `admin.yaml` or the
+performance database.
 
 ### Observability
 

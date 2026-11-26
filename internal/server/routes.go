@@ -40,6 +40,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/logs", s.handleAdminLogs)
 	s.mux.HandleFunc("GET /api/logs/stream", s.handleAdminLogsStream)
 	s.mux.HandleFunc("POST /api/test-connection", s.handleAdminTestConnection)
+	s.mux.HandleFunc("GET /api/playground/models", s.handleAdminPlaygroundModels)
+	s.mux.HandleFunc("POST /api/playground/chat", s.handleAdminPlaygroundChat)
 
 	// Embedded admin UI (option A: no Node, no asset directory).
 	s.mux.Handle("GET /ui/", s.uiHandler())
@@ -130,6 +132,8 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"GET /usage",
 			"GET /api/performance (admin)",
 			"GET /ui/ (admin)",
+			"GET /api/playground/models (admin)",
+			"POST /api/playground/chat (admin)",
 			"GET /v1/models",
 			"GET /v1/models/{model}",
 			"GET /v1/model/{model}",

@@ -33,7 +33,8 @@ func isAdminPath(p string) bool {
 	return strings.HasPrefix(p, "/api/providers/") ||
 		strings.HasPrefix(p, "/api/connections/") ||
 		strings.HasPrefix(p, "/api/combos/") ||
-		strings.HasPrefix(p, "/api/keys/")
+		strings.HasPrefix(p, "/api/keys/") ||
+		strings.HasPrefix(p, "/api/playground/")
 }
 
 // withAdminAuth gates the management API separately from inference auth.
